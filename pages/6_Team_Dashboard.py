@@ -35,11 +35,17 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
-from database.db import query
+from database.db import query, execute
 from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, rgb as _rgb, style_fig as _style,
-                        q_label as _q_label, AWAY, CARD_BG, GRID)
+                        q_label as _q_label, empty_state, gender_radio,
+                        gender_label, grid as _grid, AWAY, CARD_BG, GRID)
+from helpers.cards import (fmt as _fmt, pctile as _pctile,
+                           pctile_bar as _pctile_bar,
+                           tier as _tier, glass as _glass, onoff_html as _onoff_html,
+                           gauge_dial as _pp_gauge, gauge_range, bar_h)
+from helpers.court import shot_chart as _shot_chart, hot_zones as _hot_zones
 from helpers.glossary import glossary_tab
 import helpers.team_analytics as TA
 import helpers.team_ratings as TR
@@ -54,6 +60,12 @@ import helpers.rapm as RA
 import helpers.wpa as WP
 import helpers.networks as NW
 import helpers.lineups as LU
+import helpers.playtypes as PT
+import helpers.matchups as MU
+import helpers.gameflow as GF
+import helpers.fouls as FL
+import helpers.manual_box as MB
+import helpers.scoutboard as SB
 
 _cfg, ACCENT = page_chrome()
 GOOD = "#3fb950"
@@ -70,7 +82,6 @@ RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 # every glossary rating that exists per-player (numeric, 0-100) — the roster table
 RATING_COLS_ALL = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING",
                    "Shooting", "Finishing", "2WAY", "VERSATILITY"]
-FF_LABELS = {"eFG": "eFG%", "TOV": "TOV%", "ORB": "ORB%", "FTR": "FT rate"}
 
 # Player leaderboard catalogue, grouped by glossary category. Each entry is
 # (display label, player-row key, format kind: f0/f1/f2/pct). One leaderboard is
@@ -225,18 +236,7 @@ def _leader_bar(rows, key, label_fn, val_fn, fmt_fn, color=ACCENT, height=220):
     names = [label_fn(r) for r in seq]
     vals = [val_fn(r) for r in seq]
     texts = [fmt_fn(v) for v in vals]
-    fig = go.Figure(go.Bar(
-        x=vals, y=names, orientation="h", marker_color=color,
-        marker_line_width=0, text=texts, textposition="auto",
-        textfont=dict(size=11), cliponaxis=False,
-        hovertemplate="%{y}: %{text}<extra></extra>"))
-    fig.update_layout(
-        template="plotly_dark", height=height, paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=4, r=14, t=6, b=6),
-        showlegend=False, font=dict(size=11, color="#c9d1d9"))
-    fig.update_xaxes(visible=False)
-    fig.update_yaxes(showgrid=False, tickfont=dict(size=11), automargin=True)
-    return fig
+    return bar_h(names, vals, texts, color, height)
 
 
 def _per_game_line(per_game, key, title, color=ACCENT, height=240):
@@ -330,40 +330,9 @@ def _zone_pair_bars(zmap_a, zmap_b, name_a, name_b, value_fn, yaxis,
 
 def _gauge(value, vmin, vmax, label, suffix="", good_high=True, ref=None,
            height=210):
-    """A futuristic gauge: value vs a [vmin,vmax] league range with the league
-    average (`ref`) drawn as a cyan threshold. Red/amber/green zones key off
-    `good_high`. Delta (vs ref) shown when ref is given."""
-    span = (vmax - vmin) or 1
-    lo, hi = vmin + span / 3, vmin + 2 * span / 3
-    if good_high:
-        zones = [(vmin, lo, "rgba(231,76,60,.20)"), (lo, hi, "rgba(240,165,0,.16)"),
-                 (hi, vmax, "rgba(63,185,80,.22)")]
-    else:
-        zones = [(vmin, lo, "rgba(63,185,80,.22)"), (lo, hi, "rgba(240,165,0,.16)"),
-                 (hi, vmax, "rgba(231,76,60,.20)")]
-    mode = "gauge+number+delta" if ref is not None else "gauge+number"
-    ind = dict(
-        mode=mode, value=value,
-        number={"suffix": suffix, "font": {"size": 28, "color": "#f0f6fc"}},
-        gauge={
-            "axis": {"range": [vmin, vmax], "tickwidth": 1,
-                     "tickcolor": "#30363d", "tickfont": {"size": 9}},
-            "bar": {"color": ACCENT, "thickness": 0.3},
-            "bgcolor": "rgba(0,0,0,0)", "borderwidth": 0,
-            "steps": [{"range": [a, b], "color": c} for a, b, c in zones]},
-        title={"text": label, "font": {"size": 12, "color": "#8b949e"}})
-    if ref is not None:
-        ind["delta"] = {"reference": ref, "increasing": {"color": GOOD},
-                        "decreasing": {"color": BAD},
-                        "font": {"size": 12}}
-        ind["gauge"]["threshold"] = {"line": {"color": CYBER, "width": 3},
-                                     "thickness": 0.85, "value": ref}
-    fig = go.Figure(go.Indicator(**ind))
-    fig.update_layout(template="plotly_dark", height=height,
-                      paper_bgcolor="rgba(0,0,0,0)",
-                      margin=dict(l=22, r=22, t=46, b=10),
-                      font=dict(color="#c9d1d9"))
-    return fig
+    """League-range gauge (helpers.cards.gauge_range) with the page accent bar."""
+    return gauge_range(value, vmin, vmax, label, suffix=suffix, good_high=good_high,
+                       ref=ref, height=height, accent=ACCENT)
 
 
 def _poss_sankey(po, accent, height=360):
@@ -410,10 +379,7 @@ _dt_rows = query("SELECT gender FROM teams WHERE name=?", (default_team,)) \
 default_gender = _dt_rows[0]["gender"] if _dt_rows else "F"
 
 c1, c2 = st.columns([1, 3])
-gender = c1.radio("League", ["F", "M"],
-                  index=["F", "M"].index(default_gender),
-                  format_func=lambda g: "Girls" if g == "F" else "Boys",
-                  horizontal=True)
+gender = gender_radio(c1, default=default_gender)
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _list_teams(g):
@@ -433,12 +399,6 @@ def _score_ratings(g):
 @st.cache_data(ttl=600, show_spinner=False)
 def _tracked_ratings(g):
     return TR.tracked_ratings(gender=g)
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def _lineup_ctx(g):
-    """League-wide calibration + comparison field for the lineup predictor."""
-    return TA.lineup_engine_context(gender=g)
 
 
 scored = _score_ratings(gender)
@@ -621,8 +581,9 @@ def _gender_tracked_ids(g):
 @st.cache_data(ttl=600, show_spinner=False)
 def _rapm(g):
     """League-wide two-way RAPM over the gender's tracked games (holds teammates
-    AND opponents constant — needs the whole pool, not one team)."""
-    return RA.compute_rapm(_gender_tracked_ids(g))
+    AND opponents constant — needs the whole pool, not one team). inference=True
+    attaches the statsmodels 95% CI / significance companion."""
+    return RA.compute_rapm(_gender_tracked_ids(g), inference=True)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -641,10 +602,11 @@ def _units(tid, _tids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _scout(tid, g):
+def _scout(tid, g, limit=7, excl=()):
     trk = _tracked_ratings(g)
     return SC.build_scout(tid, g, _score_ratings(g), trk,
-                          _pack(g, trk), _ptable_full(g))
+                          _pack(g, trk), _ptable_full(g),
+                          personnel_limit=limit, exclude_pids=set(excl))
 
 
 bundle = _team_bundle(team_id, gender)
@@ -699,7 +661,7 @@ st.markdown(
     f"<div class='lab-hero'>"
     f"<div class='lab-hero-name' style='color:{ACCENT}'>{team['name']}</div>"
     f"<div class='lab-hero-sub'>{team['class']} · "
-    f"{'Girls' if gender == 'F' else 'Boys'} · {rec['games']} games"
+    f"{gender_label(gender)} · {rec['games']} games"
     + (f" · {len(bundle['tracked_ids'])} tracked" if has_tracked else "")
     + "</div>"
     f"<div class='lab-hero-chips'>{''.join(_chips)}</div>"
@@ -720,258 +682,17 @@ if not has_tracked:
 # ══════════════════════════════════════════════════════════════════════════════
 #  PLAYER PROFILE — helpers + CSS ported from 6_Players.py (Player Profile tab)
 # ══════════════════════════════════════════════════════════════════════════════
+# Accent-tinted header (dynamic accent → page-local). The static .pl-pct*/
+# .pl-glass*/.pl-scout rules used by the shared card helpers live in
+# assets/style.css.
 _par, _pag, _pab = _rgb(ACCENT)
 st.markdown(f"""
 <style>
-.pl-pct {{ margin-bottom:9px; }}
-.pl-pct-top {{ display:flex; justify-content:space-between; align-items:center;
-              margin-bottom:3px; }}
-.pl-pct-lbl {{ font-size:12px; color:#c9d1d9; }}
-.pl-pct-val {{ font-size:12px; font-weight:700; color:#f0f6fc; }}
-.pl-pct-track {{ background:#21262d; border-radius:4px; height:7px; overflow:hidden; }}
-.pl-pct-fill  {{ height:100%; border-radius:4px; }}
-.pl-scout {{ background:#161b22; border:1px solid #30363d; border-radius:10px;
-            padding:14px; height:100%; }}
 .pl-hdr {{ font-size:16px; font-weight:800; color:#f0f6fc; text-transform:uppercase;
           letter-spacing:1.5px; border-left:3px solid {ACCENT}; padding-left:11px;
           margin:18px 0 10px; text-shadow:0 0 18px rgba({_par},{_pag},{_pab},0.35); }}
-.pl-glass {{ background:rgba(22,27,34,0.55); -webkit-backdrop-filter:blur(8px);
-            backdrop-filter:blur(8px); border:1px solid rgba(48,54,61,0.9);
-            border-radius:14px; padding:13px 15px; text-align:center; height:100%;
-            box-sizing:border-box; }}
-.pl-glass-l {{ font-size:9px; color:#8b949e; text-transform:uppercase;
-              letter-spacing:1.3px; font-weight:700; }}
-.pl-glass-v {{ font-size:25px; font-weight:900; line-height:1.15; margin-top:4px; }}
-.pl-glass-s {{ font-size:10px; color:#8b949e; margin-top:2px; }}
 </style>
 """, unsafe_allow_html=True)
-
-
-def _fmt(v, fmt):
-    if v is None:
-        return "—"
-    if fmt == "int":
-        return f"{int(v)}"
-    if fmt == "f1":
-        return f"{v:.1f}"
-    if fmt == "f2":
-        return f"{v:.2f}"
-    if fmt == "pct":
-        return f"{v:.1f}%"
-    if fmt == "spp":
-        return f"{v:+.1f}"
-    return str(v)
-
-
-def _pctile(val, key, pool, lower_better=False):
-    """Percentile rank of `val` for stat `key` within `pool` (0-100)."""
-    vals = [r[key] for r in pool if r.get(key) is not None]
-    if val is None or not vals:
-        return None
-    below = sum(1 for v in vals if v < val)
-    eq = sum(1 for v in vals if v == val)
-    p = (below + 0.5 * eq) / len(vals) * 100
-    return round(100 - p) if lower_better else round(p)
-
-
-def _pctile_color(p):
-    if p is None:
-        return "#8b949e"
-    return ("#2ea043" if p >= 75 else "#3fb950" if p >= 50
-            else "#f0a500" if p >= 25 else "#da3633")
-
-
-def _pctile_bar(label, value_str, p):
-    c = _pctile_color(p)
-    w = 0 if p is None else max(2, min(100, p))
-    rank = f"{p}th" if p is not None else "—"
-    return (f"<div class='pl-pct'><div class='pl-pct-top'>"
-            f"<span class='pl-pct-lbl'>{label}</span>"
-            f"<span class='pl-pct-val'>{value_str} · "
-            f"<span style='color:{c}'>{rank}</span></span></div>"
-            f"<div class='pl-pct-track'><div class='pl-pct-fill' "
-            f"style='width:{w}%;background:{c}'></div></div></div>")
-
-
-def _tier(ovrl):
-    if ovrl is None:
-        return ("#8b949e", "UNRATED")
-    if ovrl >= 70:
-        return ("#f0a500", "ELITE")
-    if ovrl >= 62:
-        return ("#2ecc71", "GREAT")
-    if ovrl >= 54:
-        return ("#58a6ff", "ABOVE AVG")
-    if ovrl >= 46:
-        return ("#c9d1d9", "AVERAGE")
-    return ("#8b949e", "DEVELOPING")
-
-
-def _onoff_html(label, on_v, off_v, on_n, off_n, n_lbl="opps",
-                higher_better=True):
-    on_s = f"{on_v:.1f}%" if on_v is not None else "—"
-    off_s = f"{off_v:.1f}%" if off_v is not None else "—"
-    if on_v is None or off_v is None:
-        dclr, dstr, impact = "#8b949e", "—", "~ Neutral"
-    else:
-        d = on_v - off_v
-        good = (d > 1) if higher_better else (d < -1)
-        bad = (d < -1) if higher_better else (d > 1)
-        dclr = "#2ea043" if good else "#da3633" if bad else "#f0a500"
-        dstr = f"{d:+.1f}%"
-        impact = "↑ Positive" if good else "↓ Negative" if bad else "~ Neutral"
-    return (
-        f"<div style='background:#161b22;border:1px solid #30363d;"
-        f"border-radius:10px;padding:14px'>"
-        f"<div style='font-size:11px;color:#8b949e;text-transform:uppercase;"
-        f"letter-spacing:1px;margin-bottom:8px'>{label}</div>"
-        f"<div style='display:flex;justify-content:space-around;"
-        f"align-items:center;margin-bottom:8px'>"
-        f"<div style='text-align:center'>"
-        f"<div style='font-size:9px;color:#8b949e'>ON COURT</div>"
-        f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{on_s}</div>"
-        f"<div style='font-size:10px;color:#484f58'>{n_lbl}={on_n}</div></div>"
-        f"<div style='font-size:18px;color:#30363d'>vs</div>"
-        f"<div style='text-align:center'>"
-        f"<div style='font-size:9px;color:#8b949e'>OFF COURT</div>"
-        f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{off_s}</div>"
-        f"<div style='font-size:10px;color:#484f58'>{n_lbl}={off_n}</div></div>"
-        f"</div>"
-        f"<div style='text-align:center;padding:6px;background:#0d1117;"
-        f"border-radius:6px'><span style='font-weight:700;color:{dclr}'>{dstr}</span>"
-        f"<span style='font-size:11px;color:{dclr};margin-left:6px'>{impact}</span>"
-        f"</div></div>")
-
-
-def _glass(label, value, sub="", color="#f0f6fc"):
-    return (f"<div class='pl-glass'><div class='pl-glass-l'>{label}</div>"
-            f"<div class='pl-glass-v' style='color:{color}'>{value}</div>"
-            f"<div class='pl-glass-s'>{sub}</div></div>")
-
-
-def _pp_gauge(value, title, color, ref=50, vmax=100, vmin=0):
-    if value is None:
-        value = 0
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta", value=value,
-        delta={"reference": ref, "increasing": {"color": "#2ea043"},
-               "decreasing": {"color": "#da3633"}},
-        number={"font": {"size": 26, "color": "#f0f6fc"}},
-        title={"text": title, "font": {"size": 12, "color": "#8b949e"}},
-        gauge={
-            "axis": {"range": [vmin, vmax], "tickwidth": 1,
-                     "tickcolor": "#30363d", "tickfont": {"size": 8}},
-            "bar": {"color": color, "thickness": 0.28},
-            "bgcolor": "rgba(0,0,0,0)", "borderwidth": 0,
-            "steps": [
-                {"range": [vmin, ref], "color": "rgba(48,54,61,0.35)"},
-                {"range": [ref, vmax], "color": "rgba(48,54,61,0.15)"}],
-            "threshold": {"line": {"color": "#8b949e", "width": 2},
-                          "thickness": 0.75, "value": ref}}))
-    fig.update_layout(height=190, paper_bgcolor="rgba(0,0,0,0)",
-                      margin=dict(l=18, r=18, t=40, b=8),
-                      font=dict(color="#c9d1d9"))
-    return fig
-
-
-_ZONE_XY = {
-    ("C", 2): (0, 7), ("C", 3): (0, 23),
-    ("LC", 2): (-14, 5), ("LC", 3): (-21, 9),
-    ("LW", 2): (-13, 11), ("LW", 3): (-18, 15),
-    ("RW", 2): (13, 11), ("RW", 3): (18, 15),
-    ("RC", 2): (14, 5), ("RC", 3): (21, 9),
-}
-_ZONE_FULLNAME = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
-                  "RW": "Right wing", "RC": "Right corner"}
-
-
-def _fgp_color(p, a):
-    if not a:
-        return "#2d333b"
-    return "#1a9850" if p >= 0.45 else "#f4a724" if p >= 0.30 else "#d73027"
-
-
-def _shot_chart(zone_data, title="Shot chart", height=430):
-    """Plotly zone-bubble half-court. zone_data = {(zone,stype):{FGA,FGM,pct}}."""
-    fig = go.Figure()
-    LINE, DIM = "rgba(220,220,220,0.65)", "rgba(180,180,180,0.30)"
-    GOLD = "rgba(230,190,100,0.95)"
-    R3, CORNER_X = 23.0, 21.5
-    cbreak = float(np.sqrt(max(0, R3 ** 2 - CORNER_X ** 2)))
-    LANE_W, LANE_D, FT_R, RA_R = 6.0, 15.0, 6.0, 3.0
-
-    def _ln(x0, y0, x1, y1, c=LINE, w=1.5):
-        fig.add_shape(type="line", x0=x0, y0=y0, x1=x1, y1=y1,
-                      line=dict(color=c, width=w))
-
-    def _arc(cx, cy, r, t0, t1, c=LINE, w=1.5, dash="solid", n=90):
-        th = np.linspace(t0, t1, n)
-        fig.add_trace(go.Scatter(x=cx + r * np.cos(th), y=cy + r * np.sin(th),
-                                 mode="lines", line=dict(color=c, width=w, dash=dash),
-                                 showlegend=False, hoverinfo="skip"))
-
-    _ln(-25, 0, 25, 0, LINE, 2)
-    t_c = float(np.arcsin(cbreak / R3))
-    _arc(0, 0, R3, np.pi - t_c, t_c, n=120)
-    _ln(-CORNER_X, 0, -CORNER_X, cbreak)
-    _ln(CORNER_X, 0, CORNER_X, cbreak)
-    fig.add_shape(type="rect", x0=-LANE_W, y0=0, x1=LANE_W, y1=LANE_D,
-                  line=dict(color=LINE, width=1.5), fillcolor="rgba(255,255,255,0.03)")
-    _ln(-LANE_W, LANE_D, LANE_W, LANE_D)
-    _arc(0, LANE_D, FT_R, 0, np.pi)
-    _arc(0, LANE_D, FT_R, np.pi, 2 * np.pi, DIM, 1, "dot")
-    _arc(0, 0, RA_R, 0, np.pi, DIM, 1)
-    _ln(-3, -0.5, 3, -0.5, GOLD, 2.5)
-    fig.add_shape(type="circle", x0=-0.75, y0=-0.75, x1=0.75, y1=0.75,
-                  line=dict(color=GOLD, width=2.5), fillcolor="rgba(0,0,0,0)")
-
-    items = sorted(zone_data.items(), key=lambda x: x[1]["FGA"], reverse=True)
-    any_bubble = False
-    for (zone, stype), d in items:
-        pos = _ZONE_XY.get((zone, stype))
-        if not pos or d["FGA"] == 0:
-            continue
-        any_bubble = True
-        fga, fgm, fgp = d["FGA"], d["FGM"], d["pct"]
-        size = max(18, min(54, 12 + fga * 4))
-        fig.add_trace(go.Scatter(
-            x=[pos[0]], y=[pos[1]], mode="markers+text",
-            marker=dict(size=size, color=_fgp_color(fgp, fga), sizemode="diameter",
-                        line=dict(color="rgba(255,255,255,0.9)", width=1.5), opacity=0.92),
-            text=[f"<b>{fgp*100:.0f}%</b>"], textposition="middle center",
-            textfont=dict(size=max(9, min(13, int(size // 4))), color="white",
-                          family="Arial Black"),
-            hovertext=[f"<b>{stype}PT — {_ZONE_FULLNAME.get(zone, zone)}</b><br>"
-                       f"{fgm}/{fga} · {fgp*100:.1f}%"],
-            hoverinfo="text", showlegend=False))
-        fig.add_annotation(x=pos[0], y=pos[1] - size / 46 - 1.6, text=f"{fgm}/{fga}",
-                           showarrow=False, font=dict(size=8, color="rgba(255,255,255,0.7)"))
-    fig.update_layout(
-        title=dict(text=title, font=dict(size=13, color="#c9d1d9"), x=0.02),
-        xaxis=dict(range=[-26, 26], visible=False),
-        yaxis=dict(range=[-5, 32], visible=False, scaleanchor="x", scaleratio=1),
-        height=height, margin=dict(l=5, r=5, t=42, b=5),
-        plot_bgcolor="rgba(18,20,30,1)", paper_bgcolor="rgba(0,0,0,0)")
-    return fig, any_bubble
-
-
-def _hot_zones(zone_data):
-    """5-zone (LC/LW/C/RW/RC) make/attempt grid for 2PT and 3PT, rendered inline."""
-    for stype, lbl in [(2, "2-Point"), (3, "3-Point")]:
-        st.markdown(f"<span style='font-size:12px;color:#8b949e'>{lbl}</span>",
-                    unsafe_allow_html=True)
-        cols = st.columns(5)
-        for col, zone in zip(cols, ("LC", "LW", "C", "RW", "RC")):
-            d = zone_data.get((zone, stype), {"FGA": 0, "FGM": 0, "pct": 0.0})
-            m, a = d["FGM"], d["FGA"]
-            pct = d["pct"] * 100 if a else 0
-            bg = _fgp_color(d["pct"], a)
-            fg = "#fff" if a else "#6e7681"
-            col.markdown(
-                f"<div style='background:{bg};color:{fg};padding:11px 4px;"
-                f"border-radius:8px;text-align:center;font-size:12px'>"
-                f"<b>{zone}</b><br>{m}/{a}<br>{pct:.0f}%</div>",
-                unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -981,18 +702,104 @@ def _pp_zone_tables():
     return S.player_zone_splits(events=ev), S.player_zone_guarded(events=ev)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _playtype_view(g, tid, offense):
+    """Synergy-style play-type table for one team, ranked vs the league pool."""
+    return PT.team_playtype_percentiles(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _scoring_buckets(_ids):
+    """Scoring buckets (paint/2nd-chance/off-TO/fast-break/bench) over the games."""
+    return GF.scoring_buckets(list(_ids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _team_fouls(_ids):
+    """Team fouls by quarter + opponent FTA drawn, over the games."""
+    return FL.team_foul_by_quarter(list(_ids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _matchup_grid(g, tid, _ids):
+    """Who-guarded-whom rows + assignment difficulty for a team's defenders."""
+    names = MU.player_names(g)
+    rows = MU.team_matchup_rows(tid, game_ids=list(_ids), names=names)
+    diff = MU.matchup_difficulty(game_ids=list(_ids), table=_ptable_full(g))
+    return rows, diff
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RENDER MAP — this file renders OUT OF DECLARATION ORDER. Read before editing.
+# ──────────────────────────────────────────────────────────────────────────────
+#  Each section is an @st.fragment (def _fx_*), so a widget click inside it only
+#  reruns that section, not the whole page. Render order in the file:
+#    _fx_over    → tab_over     Overview
+#    _fx_players → tab_players   Players (nested 2PT/3PT sub-tabs inside)
+#    _fx_sched   → tab_sched     Schedule + box-score picker
+#    with tab_charts:  creates 10 sub-tabs (ch_sc sh rb df tr qt adv bld play
+#       impact). Scoring/Shooting/Rebounding/Defense/Trends + Play Types render
+#       INSIDE this block — they SHARE one computed-once data batch (quarter, qs,
+#       cbg, poss, tb, ob…), which is why they are NOT individually fragmented.
+#    _fx_chqt/_fx_chadv/_fx_chbld → ch_qt/ch_adv/ch_bld  (Quarters/Advanced/Build,
+#       rendered BELOW at module level — the sub-tab objects are module globals)
+#    _fx_scout   → tab_scout     Scout (rendered between Advanced and Build)
+#    tab_gloss   → Glossary
+#    _fx_prof5   → tab_prof      Player Profile — rendered LAST (~L5500)
+# ══════════════════════════════════════════════════════════════════════════════
 (tab_over, tab_players, tab_prof, tab_sched, tab_charts,
- tab_scout, tab_helper, tab_gloss) = st.tabs(
-    ["📊 Overview", "👥 Players", "🪪 Player Profile", "🗓 Schedule", "📈 Charts",
-     "🎯 Scout", "🧰 Helper", "📖 Glossary"])
+ tab_scout, tab_gloss) = st.tabs(
+    ["Overview", "Players", "Player Profile", "Schedule", "Charts",
+     "Scout", "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 1 — OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_over:
+@st.fragment
+def _fx_over():
     st.caption("Everything about this team at a glance — power ratings, record, "
                "who carries them, the four factors and how they score.")
+
+    # ── coach notes (teams.notes) ───────────────────────────────────────────
+    _curnotes = (query("SELECT notes FROM teams WHERE id=?", (team_id,))
+                 or [{"notes": ""}])[0].get("notes") or ""
+    with st.expander("📝 Team notes" + (" — saved" if _curnotes else ""),
+                     expanded=bool(_curnotes)):
+        _newnotes = st.text_area(
+            "Notes", value=_curnotes, key=f"tn_{team_id}",
+            label_visibility="collapsed",
+            placeholder="Scouting notes, reminders, season context… saved to this "
+                        "team and shown here next time.")
+        if st.button("Save notes", key=f"tn_save_{team_id}"):
+            execute("UPDATE teams SET notes=? WHERE id=?", (_newnotes, team_id))
+            st.success("Saved.")
+
+    _mprof = MB.manual_team_profile(team_id)
+    if _mprof:
+        st.markdown("<div class='pl-hdr'>Entered (untracked) games</div>",
+                    unsafe_allow_html=True)
+        _mc = st.columns(4)
+        _mc[0].metric("Games entered", _mprof["games"])
+        _mc[1].metric("PPP", f"{_mprof['PPP']:.2f}")
+        _mc[2].metric("ORtg", f"{_mprof['ORtg']:.0f}")
+        _mc[3].metric("eFG%", f"{_mprof['off_ff']['eFG']:.0f}%")
+        st.caption("From hand-entered box scores (not play-by-play tracked) · "
+                   "possessions = FGA + TOV. Enter boxes on the Setup page.")
+
+    _bytype = {}
+    for r in query("""SELECT game_type, team1_id, home_score, away_score FROM games
+                      WHERE (team1_id=? OR team2_id=?) AND home_score IS NOT NULL
+                        AND away_score IS NOT NULL""", (team_id, team_id)):
+        won = ((r["home_score"] > r["away_score"]) if r["team1_id"] == team_id
+               else (r["away_score"] > r["home_score"]))
+        d = _bytype.setdefault(r["game_type"] or "Regular", [0, 0])
+        d[0 if won else 1] += 1
+    if _bytype and (len(_bytype) > 1 or "Regular" not in _bytype):
+        _seg = " · ".join(f"**{k}** {v[0]}-{v[1]}"
+                          for k, v in sorted(_bytype.items()))
+        st.caption(f"Record by game type — {_seg}  "
+                   f"<span style='color:#8b949e'>(set types on Setup)</span>")
 
     m = st.columns(5)
     m[0].metric("Power", sc_score.get("Power", "—"),
@@ -1373,7 +1180,12 @@ with tab_over:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 2 — PLAYERS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_players:
+with tab_over:
+    _fx_over()
+
+
+@st.fragment
+def _fx_players():
     if not players:
         st.info("No eligible players for this team yet — track a game in the "
                 "Game Tracker.")
@@ -1381,6 +1193,35 @@ with tab_players:
         st.caption("The roster localized: ratings side-by-side, per-game "
                    "production, an offense/defense map, and a lineup builder "
                    "that projects a five from the player ratings.")
+
+        # ── depth chart (position · availability · measurables) ─────────────
+        _depth = query(
+            """SELECT number, name, position, availability, height, wingspan, weight
+               FROM players WHERE team_id=? AND archived=0 ORDER BY number""",
+            (team_id,))
+        if any((p["position"] or "").strip() for p in _depth):
+            st.markdown("<div class='pl-hdr'>Depth chart</div>",
+                        unsafe_allow_html=True)
+            _dotc = {"Active": "#2ea043", "Questionable": "#f0a500", "Out": "#da3633"}
+            _dc = st.columns(5)
+            for _col, _pos in zip(_dc, ["PG", "SG", "SF", "PF", "C"]):
+                _h = f"<div class='mini-lbl' style='margin-bottom:6px'>{_pos}</div>"
+                for p in [q for q in _depth if (q["position"] or "") == _pos]:
+                    _dot = _dotc.get(p["availability"] or "Active", "#8b949e")
+                    _meas = " · ".join(
+                        ([f"{p['height']:g}\"" ] if p["height"] else [])
+                        + ([f"{p['weight']:g}lb"] if p["weight"] else []))
+                    _h += (f"<div style='background:#161b22;border:1px solid #30363d;"
+                           f"border-radius:8px;padding:6px 9px;margin-bottom:6px'>"
+                           f"<span style='color:{_dot}'>●</span> <b>#{p['number']}</b> "
+                           f"{p['name']}<div style='font-size:10px;color:#8b949e'>"
+                           f"{_meas}</div></div>")
+                _col.markdown(_h, unsafe_allow_html=True)
+            st.caption("● green = available · amber = questionable · red = out. "
+                       "Set positions & status on the **Setup** page.")
+        else:
+            st.caption("➕ Set player positions on the **Setup** page to unlock the "
+                       "depth chart (with height / wingspan / weight).")
 
         arch = _archetypes(gender)
         rdf_rows = []
@@ -1549,7 +1390,7 @@ with tab_players:
                                  width="stretch",
                                  height=min(440, 60 + 35 * len(grid)))
 
-            _t2, _t3 = st.tabs(["🏀 2-pointers", "🎯 3-pointers"])
+            _t2, _t3 = st.tabs(["2-pointers", "3-pointers"])
             with _t2:
                 _shotsel(_zsh["2"], "2", "2-pt")
             with _t3:
@@ -1696,7 +1537,12 @@ with tab_players:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 3 — SCHEDULE
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_sched:
+with tab_players:
+    _fx_players()
+
+
+@st.fragment
+def _fx_sched():
     st.caption("The full schedule with results, the record against every class, "
                "and any tracked game's complete box score on demand.")
 
@@ -1727,6 +1573,7 @@ with tab_sched:
                "record & class, the model's projected score, and the result. "
                "Projected score uses opponent-adjusted ratings with home court "
                "applied to the actual venue.")
+    any_film = any((g.get("video_url") or "").strip() for g in log)
     sched_rows = []
     for g in log:
         oid = g["opp_id"]
@@ -1736,7 +1583,7 @@ with tab_sched:
         trk_rk = o_tr.get("Rank") if o_tr else None
         pred = PRED.predict_game(team_id, oid, scored=scored, tracked=tracked,
                                  home=(team_id if g["site"] == "vs" else oid))
-        sched_rows.append({
+        row = {
             "Date": g["date"], "": g["site"], "Opponent": g["opp"],
             "Cls": g["opp_class"],
             "Opp Rk": f"#{ovr}" if ovr else "—",
@@ -1747,9 +1594,18 @@ with tab_sched:
             "Result": ("W" if g["won"] else "L") + f" {g['pf']}-{g['pa']}",
             "Margin": f"{g['margin']:+d}",
             "Tracked": "✓" if g["tracked"] else "",
-        })
+        }
+        if any_film:
+            row["Film"] = (g.get("video_url") or "").strip() or None
+        sched_rows.append(row)
+    sched_cfg = {}
+    if any_film:
+        sched_cfg["Film"] = st.column_config.LinkColumn(
+            "Film", display_text="▶ Watch", width="small",
+            help="Opens the game's film (Hudl / YouTube / NFHS) in a new tab.")
     st.dataframe(pd.DataFrame(sched_rows), hide_index=True, width="stretch",
-                 height=min(680, 60 + 35 * len(sched_rows)))
+                 height=min(680, 60 + 35 * len(sched_rows)),
+                 column_config=sched_cfg)
 
     st.markdown("<div class='lab-hdr'>Box score</div>",
                 unsafe_allow_html=True)
@@ -1763,30 +1619,97 @@ with tab_sched:
         gi = st.selectbox("Pick a tracked game", range(len(tracked_games)),
                           format_func=lambda i: glabels[i], key="sc_box")
         render_box_score(tracked_games[gi]["game_id"])
-
-    # ── every team stat over the tracked games (individual graphs) ──────────
-    if has_tracked and bundle.get("per_game_full"):
-        st.markdown("<div class='lab-hdr'>Team stats over tracked games</div>",
-                    unsafe_allow_html=True)
-        st.caption("Every team stat the app tracks, one line per stat across the "
-                   "tracked games (oldest → newest). Dotted line = straight "
-                   "average over the tracked games.")
-        _per_game_stat_grid(bundle["per_game_full"], TA.PER_GAME_STAT_SPEC,
-                            key_prefix="sched_pg")
+    # (Team stats over tracked games moved to Charts → Trends to avoid duplication.)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 4 — CHARTS  (5 sub-tabs: Scoring · Shooting · Rebounding · Defense · Trends)
 # ══════════════════════════════════════════════════════════════════════════════
+with tab_sched:
+    _fx_sched()
+
+
 with tab_charts:
-    ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_adv, ch_bld = st.tabs(
-        ["🏀 Scoring", "🎯 Shooting", "🪟 Rebounding", "🛡 Defense", "📉 Trends",
-         "🕐 Quarters", "🚀 Advanced", "🧪 Build"])
+    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_adv, ch_bld,
+     ch_play, ch_impact) = st.tabs(
+        ["Scoring", "Shooting", "Rebounding", "Defense", "Trends",
+         "Quarters", "Advanced", "Build", "Play Types", "Impact Lab"])
+
+    # ───────────────────────────────────────────── PLAY TYPES ──────────────
+    with ch_play:
+        st.subheader("Play types — possession efficiency vs the league")
+        st.caption(
+            "Points per possession by **how each shot was generated**, with a "
+            "league percentile rank — the Synergy view, built from this app's "
+            "data. Two lenses: tempo (transition / early / half-court from the "
+            "possession clock) and shot creation (self / off a pass / off a "
+            "screen / both). **Inferred from logged tempo + shot creation, not "
+            "video-tagged play calls** — no pick-and-roll/iso film tagging is "
+            "possible here. A shot ends a possession, so PPP = points per shot.")
+        if not has_tracked:
+            empty_state(
+                "No tracked games yet",
+                "Track a game in the Game Tracker to unlock play-type efficiency "
+                "and league percentiles.", icon="🎬")
+        else:
+            _ptside = st.radio("Side of the ball", ["Offense", "Defense"],
+                               horizontal=True, key="pt_side")
+            _ptoff = _ptside == "Offense"
+            _ptv = _playtype_view(gender, team_id, _ptoff)
+            _ptrows = _ptv["rows"]
+            _pttot = _ptv["total"]
+            st.caption(
+                f"{'Own' if _ptoff else 'Opponent'} shots in sample: "
+                f"{_pttot['FGA']} · overall {_pttot['PPS']:.2f} PPP · percentile "
+                f"is always good-oriented ("
+                f"{'higher PPP' if _ptoff else 'fewer points allowed'} = higher rank).")
+            for _ax in ("tempo", "creation"):
+                _axr = [r for r in _ptrows if r["axis"] == _ax]
+                if not _axr:
+                    continue
+                st.markdown(f"<div class='pl-hdr'>{_axr[0]['axis_label']}</div>",
+                            unsafe_allow_html=True)
+                for r in _axr:
+                    _val = (f"{r['PPP']:.2f} PPP · {r['FG%'] * 100:.0f}% FG · "
+                            f"{r['poss']} poss")
+                    if r["pct"] is None:
+                        st.markdown(
+                            f"<div class='pl-pct'><div class='pl-pct-top'>"
+                            f"<span class='pl-pct-lbl'>{r['label']}</span>"
+                            f"<span class='pl-pct-val'>{_val} · "
+                            f"<span style='color:#8b949e'>thin sample</span>"
+                            f"</span></div></div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(_pctile_bar(r["label"], _val, r["pct"]),
+                                    unsafe_allow_html=True)
+            _ranked = [r for r in _ptrows if r["pct"] is not None]
+            if _ranked:
+                _ranked = sorted(_ranked, key=lambda r: r["PPP"])
+                _bn = [r["label"] for r in _ranked]
+                _bv = [round(r["PPP"], 2) for r in _ranked]
+                _bt = [f"{r['PPP']:.2f} · {r['tier']}" for r in _ranked]
+                _bc = [r["color"] for r in _ranked]
+                _pf = go.Figure(go.Bar(
+                    x=_bv, y=_bn, orientation="h", marker_color=_bc,
+                    marker_line_width=0, text=_bt, textposition="auto",
+                    textfont=dict(size=11), cliponaxis=False,
+                    hovertemplate="%{y}: %{text}<extra></extra>"))
+                _style(_pf, 80 + 30 * len(_bn), margin=dict(l=4, r=14, t=8, b=30))
+                _pf.update_xaxes(
+                    title=f"Points per possession ({'scored' if _ptoff else 'allowed'})")
+                _pf.update_yaxes(showgrid=False, automargin=True)
+                st.plotly_chart(_pf, width="stretch", key="pt_bar")
+            else:
+                st.caption("Not enough possessions in any single play type yet to "
+                           "rank against the league — check back after more "
+                           "tracked games.")
 
     if not has_tracked:
         with ch_sc:
-            st.info("No tracked games yet — charts need play-by-play data from the "
-                    "Game Tracker.")
+            empty_state("No tracked games yet",
+                        "The analytics wall is built from play-by-play. Track a game "
+                        "in the Game Tracker to light up scoring, shooting, defense, "
+                        "play types and the rest.", icon="📊")
     else:
         st.caption("The analytics wall — built from tracked-game events. Small "
                    "samples are directional.")
@@ -1919,6 +1842,40 @@ with tab_charts:
                            "separately). PPP estimated from the team's "
                            "possessions-per-FGA rate. Transition looks are usually "
                            "the most efficient.")
+
+            # ── season scoring breakdown (us vs opponents) ──────────────────
+            st.markdown("<div class='pl-hdr'>Scoring breakdown — us vs opponents"
+                        "</div>", unsafe_allow_html=True)
+            _scb = _scoring_buckets(tuple(bundle["tracked_ids"]))
+            _own = _scb.get(team_id, {})
+            _opp = {}
+            for _k, _v in _scb.items():
+                if _k == team_id:
+                    continue
+                for _bk, _val in _v.items():
+                    _opp[_bk] = _opp.get(_bk, 0) + _val
+            _bcats = [("Paint", "paint"), ("2nd chance", "second_chance"),
+                      ("Off TO", "off_turnover"), ("Fast break", "fast_break"),
+                      ("Bench", "bench")]
+            _bfig = go.Figure()
+            _bfig.add_trace(go.Bar(
+                name="Us", x=[c[0] for c in _bcats],
+                y=[_own.get(c[1], 0) for c in _bcats], marker_color=ACCENT,
+                marker_line_width=0, text=[_own.get(c[1], 0) for c in _bcats],
+                textposition="outside"))
+            _bfig.add_trace(go.Bar(
+                name="Opponents", x=[c[0] for c in _bcats],
+                y=[_opp.get(c[1], 0) for c in _bcats], marker_color=GREY,
+                marker_line_width=0, text=[_opp.get(c[1], 0) for c in _bcats],
+                textposition="outside"))
+            _bfig.update_layout(barmode="group")
+            _bfig.update_yaxes(title="Points (tracked games)")
+            _style(_bfig, 320)
+            st.plotly_chart(_bfig, width="stretch", key="sc_buckets_season")
+            st.caption("Field-goal points by type over tracked games · bench = all "
+                       "points by inferred non-starters (the opening five). Points "
+                       "off turnovers / 2nd chance / fast break are scoring you "
+                       "create; opponent bars are what you allow.")
 
         # ───────────────────────────────────────────── SHOOTING ─────────────
         with ch_sh:
@@ -2695,6 +2652,78 @@ with tab_charts:
                             f"({qmap[worst]:.3f} opp PPP)  ·  Best: **Q{best}** "
                             f"({qmap[best]:.3f} opp PPP).")
 
+            # ── who guarded whom — defensive matchup grid ────────────────────
+            st.markdown("<div class='lab-hdr'>Matchup grid — who guarded whom</div>",
+                        unsafe_allow_html=True)
+            st.caption("Reconstructed from the defender tagged on every contested "
+                       "shot — the FG% each defender allowed the shooters they "
+                       "covered, and how tough their assignments were (50 = average).")
+            _mrows, _mdiff = _matchup_grid(gender, team_id, tuple(bundle["tracked_ids"]))
+            if not _mrows:
+                empty_state("No contested-shot data yet",
+                            "Tag the defender on shots in the Game Tracker to build "
+                            "the who-guarded-whom grid.", icon="🛡️")
+            else:
+                _md = pd.DataFrame(_mrows)
+                _md["Defender"] = ("#" + _md["def_#"].astype(str) + " "
+                                   + _md["defender"])
+                _top = (_md.groupby("shooter")["FGA"].sum()
+                        .sort_values(ascending=False).head(10).index.tolist())
+                _sub = _md[_md["shooter"].isin(_top)]
+                _pm = _sub.pivot_table(index="Defender", columns="shooter",
+                                       values="FGM", aggfunc="sum")
+                _pa = _sub.pivot_table(index="Defender", columns="shooter",
+                                       values="FGA", aggfunc="sum")
+                _grid = (_pm / _pa.replace(0, np.nan) * 100).round(0)
+                st.caption("FG% allowed · defender (row) × shooter (column), top "
+                           "shooters by volume. Blank = never matched up.")
+                st.dataframe(_grid, width="stretch", key="mu_grid")
+
+                _drows = []
+                for p in players:
+                    d = _mdiff.get(p["_pid"])
+                    if d and d.get("shots_faced"):
+                        _drows.append({
+                            "Defender": f"#{p['number']} {p['name']}",
+                            "Shots faced": int(d["shots_faced"]),
+                            "Assignment difficulty": round(d.get("Difficulty100", 50)),
+                        })
+                if _drows:
+                    _drows.sort(key=lambda r: -r["Assignment difficulty"])
+                    st.markdown("**Toughest assignments** — attempt-weighted scorer "
+                                "quality each defender faced")
+                    st.dataframe(
+                        pd.DataFrame(_drows), hide_index=True, width="stretch",
+                        key="mu_diff",
+                        column_config={"Assignment difficulty":
+                                       st.column_config.ProgressColumn(
+                                           "Assignment difficulty", format="%.0f",
+                                           min_value=0, max_value=100)})
+
+            # ── team foul timing ────────────────────────────────────────────
+            st.markdown("<div class='pl-hdr'>Foul timing</div>",
+                        unsafe_allow_html=True)
+            _tf = _team_fouls(tuple(bundle["tracked_ids"])).get(team_id)
+            if not _tf:
+                empty_state("No fouls logged yet",
+                            "Foul timing needs tracked games.", icon="⚠️")
+            else:
+                _fqv = [_tf["by_q"].get(q, 0) for q in range(1, 5)]
+                _fm = st.columns(3)
+                _fm[0].metric("Fouls / game",
+                              f"{_tf['total'] / max(_tf['games'], 1):.1f}")
+                _fm[1].metric("Opp FTA drawn", _tf["opp_fta"])
+                _fm[2].metric("Total fouls", _tf["total"])
+                _fqf = go.Figure(go.Bar(
+                    x=["Q1", "Q2", "Q3", "Q4"], y=_fqv, marker_color=BAD,
+                    marker_line_width=0, text=_fqv, textposition="outside"))
+                _fqf.update_yaxes(title="Fouls committed")
+                _style(_fqf, 260)
+                st.plotly_chart(_fqf, width="stretch", key="df_foul_timing")
+                st.caption("When the team fouls (Q4 spikes = late-game trouble / "
+                           "putting opponents in the bonus). Opp FTA = free throws "
+                           "your fouls gave up.")
+
         # ───────────────────────────────────────────── TRENDS ───────────────
         with ch_tr:
             if len(trend) < 2:
@@ -2843,7 +2872,8 @@ with tab_charts:
 # ══════════════════════════════════════════════════════════════════════════════
 #  CHARTS ▸ QUARTERS  (every tracked stat, split by quarter)
 # ══════════════════════════════════════════════════════════════════════════════
-with ch_qt:
+@st.fragment
+def _fx_chqt():
     qbx = bundle["quarter_boxes"]
     if not has_tracked or not qbx:
         st.info("No tracked games yet — quarter splits need play-by-play data "
@@ -3439,15 +3469,20 @@ with ch_qt:
 # ══════════════════════════════════════════════════════════════════════════════
 #  CHARTS ▸ ADVANCED  (the futuristic analytics lab: 5 sub-tabs)
 # ══════════════════════════════════════════════════════════════════════════════
-with ch_adv:
+with ch_qt:
+    _fx_chqt()
+
+
+@st.fragment
+def _fx_chadv():
     st.caption("The analytics lab — league-relative efficiency, team DNA, "
                "schedule résumé, the passing network and possession flow. (Shot "
                "Lab now lives under Charts → Shooting.) Most panels need tracked "
                "games; the résumé works from results alone.")
 
     adv_eff, adv_res, adv_play, adv_flow = st.tabs(
-        ["⚡ Efficiency & DNA", "📋 Résumé & Form", "🕸 Playmaking",
-         "📽 Game Flow"])
+        ["Efficiency & DNA", "Résumé & Form", "Playmaking",
+         "Game Flow"])
 
     # ───────────────────────────────────────── EFFICIENCY & DNA ─────────────
     with adv_eff:
@@ -3868,15 +3903,42 @@ with ch_adv:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 7 — INSIGHTS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_scout:
+with ch_adv:
+    _fx_chadv()
+
+
+@st.fragment
+def _fx_scout():
     st.caption("Game-day scouting report — keys to the game, four factors & "
                "tendencies, the 2s-vs-3s question, personnel and a printable "
                "sheet. Built from the same tracked-game engine as the rest of "
                "the page.")
     frame = st.radio("Framing", ["Scout opponent", "Self-scout (own team)"],
                      horizontal=True, key="scout_frame")
-    sc = _scout(team_id, gender)
-    opp_label = "Self-scout" if frame.startswith("Self") else "Opponent scout"
+    _self = frame.startswith("Self")
+    opp_label = "Self-scout" if _self else "Opponent scout"
+
+    if _self:
+        # self-scout: the WHOLE roster, nobody hidden
+        sc = _scout(team_id, gender, None, ())
+    else:
+        # opponent scout: hide players who won't play (default = injured / out /
+        # suspended from their availability), still picking from the full roster
+        _avail = {r["id"]: (r["availability"] or "Active") for r in query(
+            "SELECT id, availability FROM players WHERE team_id=? AND archived=0",
+            (team_id,))}
+        _names = {p["_pid"]: f"#{p['number']} {p['name']}" for p in players}
+        _def_hide = sorted(pid for pid in _names
+                           if _avail.get(pid, "Active")
+                           in ("Out", "Injured", "Suspended"))
+        _hide = st.multiselect(
+            "Hide players (injured / suspended / won't play)", list(_names),
+            default=_def_hide, format_func=lambda pid: _names.get(pid, str(pid)),
+            key="scout_hide")
+        sc = _scout(team_id, gender, None, tuple(sorted(_hide)))
+        if _hide:
+            st.caption("Off the scouting list: "
+                       + ", ".join(_names[p] for p in _hide if p in _names) + ".")
 
     trk = sc["trk"]
     hcols = st.columns(5)
@@ -3894,12 +3956,12 @@ with tab_scout:
     # ── keys to the game ─────────────────────────────────────────────────────
     k1, k2 = st.columns(2)
     with k1:
-        st.markdown("<div class='lab-hdr'>🛡️ How to guard them</div>",
+        st.markdown("<div class='lab-hdr'>How to guard them</div>",
                     unsafe_allow_html=True)
         for gtip in sc["guard"]:
             st.markdown(f"- {gtip}")
     with k2:
-        st.markdown("<div class='lab-hdr'>⚔️ How to attack them</div>",
+        st.markdown("<div class='lab-hdr'>How to attack them</div>",
                     unsafe_allow_html=True)
         for atip in sc["attack"]:
             st.markdown(f"- {atip}")
@@ -3926,13 +3988,13 @@ with tab_scout:
         scs1, scs2 = st.columns(2)
         with scs1:
             if sc["strengths"]:
-                st.markdown("**💪 Strengths (≥70th pctl)**")
+                st.markdown("**Strengths (≥70th pctl)**")
                 for f in sc["strengths"]:
                     st.markdown(f"- {f['label']} — {f['value']:.1f} "
                                 f"({f['pct']:.0f}th)")
         with scs2:
             if sc["weaknesses"]:
-                st.markdown("**🎯 Exploit (≤30th pctl)**")
+                st.markdown("**Exploit (≤30th pctl)**")
                 for f in sc["weaknesses"]:
                     st.markdown(f"- {f['label']} — {f['value']:.1f} "
                                 f"({f['pct']:.0f}th)")
@@ -4048,46 +4110,46 @@ with tab_scout:
         tips = []
         # offense
         if ff["off"]["eFG"] >= 0.50:
-            tips.append("🟢 **Efficient shooting team** — eFG% "
+            tips.append("**Efficient shooting team** — eFG% "
                         f"{_pctf(ff['off']['eFG'])}; contest everything and keep "
                         "them off the offensive glass.")
         elif ff["off"]["eFG"] <= 0.42:
-            tips.append("🔴 **Below-average shooting** — eFG% "
+            tips.append("**Below-average shooting** — eFG% "
                         f"{_pctf(ff['off']['eFG'])}; pack the paint and live with "
                         "contested jumpers.")
         if ff["off"]["TOV"] >= 0.18:
-            tips.append("🔴 **Turnover-prone** — gives it away on "
+            tips.append("**Turnover-prone** — gives it away on "
                         f"{_pctf(ff['off']['TOV'])} of trips; pressure the ball "
                         "to force live-ball turnovers.")
         if ff["off"]["ORB"] >= 0.33:
-            tips.append("🟢 **Crashes the offensive glass** — OREB% "
+            tips.append("**Crashes the offensive glass** — OREB% "
                         f"{_pctf(ff['off']['ORB'])}; box out and secure the "
                         "first rebound.")
         if soff["pct_paint"] >= 0.50:
-            tips.append("🟠 **Paint-heavy offense** — "
+            tips.append("**Paint-heavy offense** — "
                         f"{_pctf(soff['pct_paint'])} of points in the paint; wall "
                         "up the rim and make them prove the jumper.")
         elif brk["3PAr"] >= 0.40:
-            tips.append("🟠 **Lives behind the arc** — "
+            tips.append("**Lives behind the arc** — "
                         f"{_pctf(brk['3PAr'])} of shots are threes; run them off "
                         "the line.")
         # defense
         if ff["def"]["TOV"] >= 0.18:
-            tips.append("🟢 **Forces turnovers** — takes it away on "
+            tips.append("**Forces turnovers** — takes it away on "
                         f"{_pctf(ff['def']['TOV'])} of opponent trips; value "
                         "every possession and limit careless passes.")
         if ff["def"]["eFG"] <= 0.44:
-            tips.append("🟢 **Locks down shots** — holds opponents to "
+            tips.append("**Locks down shots** — holds opponents to "
                         f"{_pctf(ff['def']['eFG'])} eFG; attack early before the "
                         "defense sets.")
         # tempo
         pace = summ.get("POSS_pg", 0)
         if pace >= 70:
-            tips.append("⚡ **Plays fast** — "
+            tips.append("**Plays fast** — "
                         f"{pace:.0f} possessions/game; control tempo to shorten "
                         "the game if you're the underdog.")
         elif pace and pace < 60:
-            tips.append("🐢 **Slow, deliberate pace** — "
+            tips.append("**Slow, deliberate pace** — "
                         f"{pace:.0f} possessions/game; speed them up to drag them "
                         "out of their comfort zone.")
         # leaning on a star
@@ -4096,7 +4158,7 @@ with tab_scout:
             top = max(rated_pl, key=lambda p: p["PPG"])
             share = top["PTS"] / max(tb["PTS"], 1)
             if share >= 0.28:
-                tips.append(f"🎯 **Star-dependent** — #{top['number']} "
+                tips.append(f"**Star-dependent** — #{top['number']} "
                             f"{top['name']} scores {share*100:.0f}% of the team's "
                             "points; key on them and force someone else to beat "
                             "you.")
@@ -4198,12 +4260,37 @@ with tab_scout:
         _style(zfig, 320)
         st.plotly_chart(zfig, width="stretch", key="scout_zones")
 
+    # ── scoring by possession length (when tracked) ──────────────────────────
+    if has_tracked and bundle.get("poss_length"):
+        _plen = [r for r in bundle["poss_length"]
+                 if r["label"] != "Untimed" and r["FGA"]]
+        if _plen:
+            st.markdown("<div class='lab-hdr'>Scoring by possession length</div>",
+                        unsafe_allow_html=True)
+            _plf = go.Figure(go.Bar(
+                x=[r["label"] for r in _plen], y=[r["PPP"] for r in _plen],
+                marker_color=ACCENT, marker_line_width=0,
+                text=[f"{r['PPP']:.2f} · {r['FGA']} FGA · {r['FG%'] * 100:.0f}%"
+                      for r in _plen], textposition="auto"))
+            _plf.update_yaxes(title="Points per shot")
+            _style(_plf, 300)
+            st.plotly_chart(_plf, width="stretch", key="scout_plen")
+            st.caption("How they score by tempo — transition (≤6s) vs early vs "
+                       "half-court. If they spike in transition, get back on "
+                       "defense; if half-court is weak, make them play in a crowd.")
+
+    # ── game-plan notes (opponent scout) ─────────────────────────────────────
+    if not _self:
+        st.markdown("<div class='lab-hdr'>Game-plan notes</div>",
+                    unsafe_allow_html=True)
+        SB.render_notes(team_id)
+
     # ── printable export ─────────────────────────────────────────────────────
-    st.markdown("<div class='lab-hdr'>🖨️ Printable scout sheet</div>",
+    st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)
     html_doc = SC.printable_html(sc, opp_label)
     st.download_button(
-        "⬇ Download printable scout (HTML — open & print to PDF)",
+        "Download printable scout (HTML — open & print to PDF)",
         data=html_doc, file_name=f"scout_{sc['name'].replace(' ', '_')}.html",
         mime="text/html", key="scout_dl")
     with st.expander("Preview printable sheet"):
@@ -4213,249 +4300,12 @@ with tab_scout:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 8 — HELPER  (the orphaned helper engines: Predictor + Impact Lab + Lineup)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_helper:
-    st.caption("The coach's helper — surfaces the matchup Predictor, the Impact "
-               "Lab (RAPM, win-probability added, chemistry and lineups) and the "
-               "Lineup simulator, the engines that otherwise have no home in the app.")
-    h_pred, h_impact, h_lineup = st.tabs(["🔮 Predictor", "🧬 Impact Lab", "🧪 Lineup"])
+# Helper tab dissolved: matchup Predictor removed, Lineup creator moved to the War
+# Room page, Impact Lab moved here under Charts. `if True:` preserves the moved
+# Impact-Lab block's original indentation (no wholesale re-indent).
+if True:
+    h_impact = ch_impact
 
-    with h_lineup:
-        st.markdown("<div class='lab-hdr'>Lineup simulator</div>",
-                    unsafe_allow_html=True)
-        st.caption("Pick up to five players. The engine projects an "
-                   "opponent-comparable Offensive / Defensive / Net Rating from "
-                   "usage, true shooting, shot creation (SC%) and defensive "
-                   "activity — **not** a rating average — then ranks the five "
-                   "against every tracked team. Built bottom-up from per-possession "
-                   "metrics and calibrated to the league scale, so it credits who "
-                   "actually drives wins, not who plays on a good team.")
-        ctx = _lineup_ctx(gender)
-        labels = {}
-        for p in players:
-            base = f"#{p['number']} {p['name']}"
-            labels[p["_pid"]] = (f"{base} (OVR {p['OVERALL']:.0f})"
-                                 if p["OVERALL"] is not None else base)
-        default5 = [p["_pid"] for p in
-                    sorted(players, key=lambda p: p["MPG"] or 0, reverse=True)[:5]]
-        lc1, lc2 = st.columns([3, 2])
-        with lc1:
-            chosen = st.multiselect(
-                "Lineup", list(labels), default=default5,
-                format_func=lambda pid: labels[pid], max_selections=5,
-                key="pl_lineup")
-        with lc2:
-            opp_opts = [None] + [t for t in tracked if t != team_id]
-            opp_id = st.selectbox(
-                "Opponent (optional)", opp_opts,
-                format_func=lambda t: ("League average" if t is None
-                                       else tracked[t]["name"]),
-                key="pl_lineup_opp")
-
-        if chosen:
-            pred = TA.lineup_prediction(players, chosen, ctx, team_id,
-                                        opp_id=opp_id)
-            lg = pred["league"]
-            team_net = lg.get("team_net")
-
-            pm = st.columns(5)
-            pm[0].metric("Proj ORtg", f"{pred['ORtg']:.1f}",
-                         help="Points scored per 100 possessions (calibrated to "
-                              "the league scale).")
-            pm[1].metric("Proj DRtg", f"{pred['DRtg']:.1f}",
-                         help="Points allowed per 100 — lower is better.")
-            net_delta = (f"{pred['NetRtg'] - team_net:+.1f} vs team"
-                         if team_net is not None else None)
-            pm[2].metric("Proj Net", f"{pred['NetRtg']:+.1f}", net_delta,
-                         help="ORtg − DRtg. Delta is vs the team's actual Net.")
-            pm[3].metric("Proj Score", pred["score_line"],
-                         help=f"At ~{pred['pace']:.0f} possessions/game.")
-            pm[4].metric("League Rank",
-                         f"#{lg['rank']} / {lg['of']}",
-                         help=f"{lg['percentile']:.0f}th percentile of tracked "
-                              "teams by projected Net." if lg['percentile'] is not None
-                              else None)
-
-            if pred["matchup"]:
-                m = pred["matchup"]
-                verb = "favored by" if m["favored"] else "underdog by"
-                clr = GOOD if m["favored"] else BAD
-                st.markdown(
-                    f"<div style='font-size:0.95rem;margin:.2rem 0 .4rem'>"
-                    f"vs <b>{m['opp']}</b>: "
-                    f"<span style='color:{clr};font-weight:700'>{verb} "
-                    f"{abs(m['spread']):.1f}</span> on a neutral floor.</div>",
-                    unsafe_allow_html=True)
-
-            # ── where this five lands among the league's teams ───────────────
-            field = pred["league"]
-            if field["net_field_min"] is not None:
-                pad = max(2.0, (field["net_field_max"] - field["net_field_min"]) * 0.08)
-                gx = [t["NetRtg"] for t in tracked.values()]
-                gauge = go.Figure()
-                gauge.add_trace(go.Scatter(
-                    x=gx, y=[0] * len(gx), mode="markers",
-                    marker=dict(size=9, color=GREY, line=dict(width=0)),
-                    hovertext=[t["name"] for t in tracked.values()],
-                    hovertemplate="%{hovertext}<br>Net %{x:.1f}<extra></extra>",
-                    name="Teams"))
-                if team_net is not None:
-                    gauge.add_trace(go.Scatter(
-                        x=[team_net], y=[0], mode="markers",
-                        marker=dict(size=15, color=BLUE, symbol="diamond",
-                                    line=dict(width=1, color="#0d1117")),
-                        hovertemplate=f"{team['name']} actual"
-                                      "<br>Net %{x:.1f}<extra></extra>",
-                        name="Team actual"))
-                gauge.add_trace(go.Scatter(
-                    x=[pred["NetRtg"]], y=[0], mode="markers+text",
-                    marker=dict(size=20, color=ACCENT, symbol="star",
-                                line=dict(width=1, color="#0d1117")),
-                    text=["this five"], textposition="top center",
-                    textfont=dict(size=11, color=ACCENT),
-                    hovertemplate="Projected lineup<br>Net %{x:.1f}<extra></extra>",
-                    name="Lineup"))
-                gauge.add_vline(x=0, line=dict(color="#30363d", dash="dot"))
-                gauge.update_xaxes(
-                    title="Net rating — every tracked team (grey) · this five (★)",
-                    range=[field["net_field_min"] - pad, field["net_field_max"] + pad])
-                gauge.update_yaxes(visible=False, range=[-1, 1])
-                gauge.update_layout(showlegend=False)
-                _style(gauge, 180)
-                st.plotly_chart(gauge, width="stretch", key="pl_lineup_gauge")
-
-            # ── who drives the projection (offense vs defense) ───────────────
-            dcol, tcol = st.columns([3, 4])
-            with dcol:
-                cb = pred["contrib"]
-                sca = go.Figure(go.Scatter(
-                    x=[c["off_pts100"] for c in cb],
-                    y=[c["def_z"] for c in cb], mode="markers+text",
-                    text=[f"#{c['number']}" for c in cb],
-                    textposition="top center", textfont=dict(size=10),
-                    marker=dict(
-                        size=[max(12, c["usg_share"] * 90) for c in cb],
-                        color=[c["off_pts100"] for c in cb],
-                        colorscale="Viridis", showscale=False,
-                        line=dict(width=1, color="#30363d")),
-                    hovertext=[c["name"] for c in cb],
-                    hovertemplate="%{hovertext}<br>Off/100 %{x:.1f} · "
-                                  "Def z %{y:.2f}<extra></extra>"))
-                sca.add_hline(y=0, line=dict(color="#30363d", dash="dot"))
-                sca.update_xaxes(title="Offensive load (pts/100) →")
-                sca.update_yaxes(title="Defense (z) →")
-                _style(sca, 320)
-                st.plotly_chart(sca, width="stretch", key="pl_lineup_scatter")
-                st.caption("Bubble size = share of the unit's possessions. "
-                           "Top-right = carries offense and defends.")
-            with tcol:
-                cdf = pd.DataFrame([{
-                    "#": c["number"], "Player": c["name"],
-                    "Usg%": round(c["usg_share"] * 100, 1),
-                    "Off/100": c["off_pts100"],
-                    "Pts/poss": c["scoring_eff"],
-                    "Def z": c["def_z"],
-                    "SelfCr%": c["self_cr"],
-                } for c in pred["contrib"]])
-                st.dataframe(cdf, hide_index=True, width="stretch",
-                             height=min(280, 60 + 35 * len(cdf)))
-                st.caption(
-                    f"Unit self-creation: {pred['team_selfcr']:.0f}% of shots "
-                    "created off the dribble. Shot-creation index "
-                    f"{pred.get('creation_index', 1.0):.2f}× the team-average SC/A "
-                    "(shots created — shot + pass + screen — per attempt; 1.00 = "
-                    "creates like a typical team five, >1 lifts the offense).")
-
-            # ── swap sensitivity: best upgrades from the bench ───────────────
-            bench = [p for p in players if p["_pid"] not in chosen]
-            if bench and len(chosen) == 5:
-                base_net = pred["NetRtg"]
-                swaps = []
-                for out_pid in chosen:
-                    for bp in bench:
-                        new = [bp["_pid"] if x == out_pid else x for x in chosen]
-                        nn = TA.lineup_prediction(players, new, ctx, team_id)["NetRtg"]
-                        swaps.append((nn - base_net, out_pid, bp))
-                ups = sorted([s for s in swaps if s[0] > 0.05],
-                             key=lambda s: s[0], reverse=True)[:3]
-                name_of = {p["_pid"]: p for p in players}
-                st.markdown("<div class='lab-hdr'>Swap sensitivity</div>",
-                            unsafe_allow_html=True)
-                if ups:
-                    for delta, out_pid, bp in ups:
-                        o = name_of[out_pid]
-                        st.markdown(
-                            f"- **+{delta:.1f} Net** — sub in "
-                            f"#{bp['number']} {bp['name']} for "
-                            f"#{o['number']} {o['name']}")
-                else:
-                    st.caption("No bench swap improves this five's projected Net — "
-                               "it's the team's best available unit.")
-
-            for f in pred["flags"]:
-                st.caption(f"⚠️ {f}")
-
-
-    # ───────────────────────────────────────── PREDICTOR ────────────────────
-    with h_pred:
-        st.markdown("<div class='lab-hdr'>Matchup predictor</div>",
-                    unsafe_allow_html=True)
-        st.caption("Predict this team against any opponent — projected score, "
-                   "spread, win probability and the line-by-line margin build-up "
-                   "from the opponent-adjusted ratings.")
-        opp_choices = [t for t in order_ids if t != team_id]
-        if not opp_choices:
-            st.info("No opponent to predict against yet.")
-        else:
-            pc1, pc2 = st.columns([3, 2])
-            opp_pred = pc1.selectbox(
-                "Opponent", opp_choices,
-                format_func=lambda tid: _team_label(team_by_id[tid]), key="hp_opp")
-            venue = pc2.radio("Venue", ["Home", "Neutral", "Away"], index=1,
-                              horizontal=True, key="hp_venue")
-            home_arg = (team_id if venue == "Home"
-                        else opp_pred if venue == "Away" else None)
-            pred = PRED.predict_game(team_id, opp_pred, scored=scored,
-                                     tracked=tracked, home=home_arg)
-            if not pred:
-                st.warning("One of the teams isn't rated yet — each needs at least "
-                           "one completed game.")
-            else:
-                fav_name = (pred["a_name"] if pred["favorite"] == team_id
-                            else pred["b_name"])
-                mcols = st.columns(4)
-                mcols[0].metric("Projected score",
-                                f"{pred['pf_a']:.0f}–{pred['pf_b']:.0f}",
-                                help=f"{pred['a_name']} vs {pred['b_name']}")
-                mcols[1].metric("Spread", f"{fav_name} -{pred['spread']:.1f}")
-                mcols[2].metric(f"{team['name'][:14]} win %",
-                                f"{pred['win_prob_a']*100:.0f}%")
-                mcols[3].metric("Projected total", f"{pred['total']:.0f}")
-                st.caption(f"Method: {pred['method']} · confidence "
-                           f"{pred['confidence']}.")
-                wpf = go.Figure(go.Bar(
-                    x=[pred["win_prob_a"] * 100, pred["win_prob_b"] * 100],
-                    y=[pred["a_name"], pred["b_name"]], orientation="h",
-                    marker_color=[ACCENT, AWAY], marker_line_width=0,
-                    text=[f"{pred['win_prob_a']*100:.0f}%",
-                          f"{pred['win_prob_b']*100:.0f}%"],
-                    textposition="auto"))
-                wpf.update_xaxes(title="Win probability", range=[0, 100])
-                _style(wpf, 170)
-                wpf.update_layout(margin=dict(l=4, r=14, t=6, b=30))
-                st.plotly_chart(wpf, width="stretch", key="hp_wp")
-
-                st.markdown("**How the margin is built**")
-                st.dataframe(pd.DataFrame([{
-                    "Factor": c["label"], "Points": c["value"],
-                    "Detail": c["note"]} for c in pred["components"]]),
-                    hide_index=True, width="stretch")
-                if pred["tracked"]:
-                    tr = pred["tracked"]
-                    st.caption(f"Tracked-data projection: {tr['pf_a']:.0f}–"
-                               f"{tr['pf_b']:.0f} at ~{tr['pace']:.0f} possessions "
-                               f"(ORtg {tr['ortg_a']:.0f} vs {tr['ortg_b']:.0f}).")
-
-    # ───────────────────────────────────────── IMPACT LAB ───────────────────
     with h_impact:
         if not has_tracked:
             st.info("Tracked games needed for the impact lab (RAPM, WPA, chemistry "
@@ -4496,6 +4346,39 @@ with tab_helper:
                         "Player": v["name"], "RAPM": v["RAPM"],
                         "O": v["ORAPM"], "D": v["DRAPM"], "Poss": v["poss"],
                     } for v in rows_r]), hide_index=True, width="stretch")
+
+                # ── RAPM with uncertainty (95% CI from the unregularized fit) ──
+                inf_rows = [v for v in rows_r if v.get("RAPM_se") is not None]
+                if inf_rows:
+                    st.markdown("<div class='lab-hdr'>RAPM uncertainty — how firm "
+                                "is each estimate?</div>", unsafe_allow_html=True)
+                    sequ = list(reversed(inf_rows))
+                    xs = [v["RAPM"] for v in sequ]
+                    half = [1.96 * v["RAPM_se"] for v in sequ]
+                    nm = [v["name"] for v in sequ]
+                    sig = [abs(v["RAPM"]) > h for v, h in zip(sequ, half)]
+                    dot = [("#3fb950" if x > 0 else "#e74c3c") if s else "#6b7280"
+                           for s, x in zip(sig, xs)]
+                    ef = go.Figure(go.Scatter(
+                        x=xs, y=nm, mode="markers", customdata=half,
+                        error_x=dict(type="data", array=half, color="#8b949e",
+                                     thickness=1.1, width=4),
+                        marker=dict(size=10, color=dot, line=dict(width=0)),
+                        hovertemplate="%{y}: RAPM %{x:.1f} ± %{customdata:.1f}"
+                                      "<extra></extra>"))
+                    ef.add_vline(x=0, line=dict(color="#8b949e", width=1, dash="dot"))
+                    ef.update_xaxes(title="RAPM (pts / 100) · whisker = 95% CI")
+                    _style(ef, max(220, 30 * len(sequ) + 60))
+                    ef.update_layout(margin=dict(l=4, r=14, t=6, b=30),
+                                     showlegend=False)
+                    st.plotly_chart(ef, width="stretch", key="il_rapm_ci")
+                    st.caption(
+                        f"Dot = regularized RAPM (the ranking number). Whisker = 95% "
+                        f"CI from the unregularized fit — how tightly the ~15-game "
+                        f"sample pins each player down. {sum(sig)} of {len(sequ)} "
+                        "clear zero (green/red = distinguishable from average; grey = "
+                        "not yet). Wide bands are the honest signal that small samples "
+                        "can't separate most players.")
             else:
                 st.caption("Not enough possessions to solve RAPM for this team yet.")
 
@@ -4638,7 +4521,12 @@ with tab_helper:
 # ══════════════════════════════════════════════════════════════════════════════
 #  CHARTS ▸ BUILD YOUR OWN CHART  (a free-form chart lab over the team's data)
 # ══════════════════════════════════════════════════════════════════════════════
-with ch_bld:
+with tab_scout:
+    _fx_scout()
+
+
+@st.fragment
+def _fx_chbld():
     st.caption("Build-your-own chart lab — pick a dataset, a chart type and the "
                "stat(s) you want on it (one or many). Everything updates live; "
                "hover the chart and use its toolbar to zoom or download a PNG.")
@@ -5027,13 +4915,16 @@ with ch_bld:
                 default=["Label"] + num_cols[:min(8, len(num_cols))],
                 key=f"bld_tc_{k}")
             if cols:
-                st.dataframe(df[cols], hide_index=True, width="stretch",
-                             height=min(640, 60 + 35 * len(df)))
+                _grid(df[cols], f"bld_dt_{k}", height=min(640, 60 + 35 * len(df)))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 9 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
+with ch_bld:
+    _fx_chbld()
+
+
 with tab_gloss:
     glossary_tab("ta_gloss")
 
@@ -5087,7 +4978,7 @@ def _render_profile(P, pid, rows, zsplits, zguard):
                        ("SPG", "SPG"), ("BPG", "BPG"), ("MPG", "MIN")]
         if P.get(k) is not None)
     _arch_chip = (f"<span class='stat-chip' style='border-color:{ACCENT}'>"
-                  f"🧬 <b>{_arch}</b></span>" if _arch else "")
+                  f"<b>{_arch}</b></span>" if _arch else "")
     st.markdown(f"<div class='form-strip' style='margin:-8px 0 10px'>"
                 f"{_arch_chip}{_pg_chips}</div>", unsafe_allow_html=True)
     _pbadges = _badges(gender).get(pid, [])
@@ -5155,7 +5046,7 @@ def _render_profile(P, pid, rows, zsplits, zguard):
         fig, ok = _shot_chart(zsplits.get(pid, {}), f"{P['name']} — FG% by zone")
         if ok:
             st.plotly_chart(fig, width="stretch", key="tdprof_court")
-            st.caption("🟢 ≥45% · 🟡 30–44% · 🔴 <30% · bubble size = attempts · "
+            st.caption("≥45% · 30–44% · <30% · bubble size = attempts · "
                        "center 2PT = paint proxy.")
         else:
             st.info("No located shots for this player yet.")
@@ -5528,37 +5419,37 @@ def _render_profile(P, pid, rows, zsplits, zguard):
     OVR = P["OVERALL"] or 0
 
     if OVR >= 65 and DEF >= 60:
-        arch = ("👑", "Two-Way Force",
+        arch = ("", "Two-Way Force",
                 "Produces on offense and disrupts on defense — a rare both-ends impact.")
     elif OFF >= 62 and pc("PPG") >= 80:
-        arch = ("⚡", "Scoring Machine",
+        arch = ("", "Scoring Machine",
                 "A primary offensive weapon who creates and converts at volume.")
     elif PLY >= 62 and pc("APG") >= 80:
-        arch = ("🎯", "Floor General",
+        arch = ("", "Floor General",
                 "Runs the offense through vision and distribution.")
     elif REB_R >= 62 or pc("REB") >= 85:
-        arch = ("📦", "Glass Cleaner",
+        arch = ("", "Glass Cleaner",
                 "Owns the boards and generates extra possessions.")
     elif DEF >= 62 or pc("STOCKS") >= 85:
-        arch = ("🛡️", "Defensive Anchor",
+        arch = ("", "Defensive Anchor",
                 "Disrupts opponents with steals, blocks, and contests.")
     elif pc("3P%") >= 70 and P["3PA"] >= 15 and pc("DSHOT%", True) >= 55:
-        arch = ("🏹", "3-and-D Wing",
+        arch = ("", "3-and-D Wing",
                 "Spaces the floor and holds up defensively — a valuable role.")
     elif pc("3P%") >= 70 and P["3PA"] >= 20:
-        arch = ("🎪", "Spot-Up Shooter",
+        arch = ("", "Spot-Up Shooter",
                 "An off-ball threat who punishes help defense from deep.")
     elif pc("Paint%") >= 70 and pc("REB") >= 60:
-        arch = ("🔨", "Interior Presence",
+        arch = ("", "Interior Presence",
                 "Finishes inside efficiently and commands the paint.")
     elif OVR >= 56:
-        arch = ("🧩", "Versatile Contributor",
+        arch = ("", "Versatile Contributor",
                 "Well-rounded across the board without one dominant trait.")
     elif pc("+/-") >= 75:
-        arch = ("🔋", "High-Impact Role Player",
+        arch = ("", "High-Impact Role Player",
                 "The team plays better with them on the floor.")
     else:
-        arch = ("📊", "Developing Player",
+        arch = ("", "Developing Player",
                 "Still building their game — more tracked games will sharpen it.")
 
     st.markdown(
@@ -5617,17 +5508,18 @@ def _render_profile(P, pid, rows, zsplits, zguard):
     sc1, sc2 = st.columns(2)
     sc1.markdown(
         f"<div class='pl-scout'><div style='font-size:13px;font-weight:700;"
-        f"color:#2ea043;margin-bottom:10px'>✅ Strengths</div>"
+        f"color:#2ea043;margin-bottom:10px'>Strengths</div>"
         f"{_bullets(strengths, 'No standout strengths in this sample yet.')}</div>",
         unsafe_allow_html=True)
     sc2.markdown(
         f"<div class='pl-scout'><div style='font-size:13px;font-weight:700;"
-        f"color:#f0a500;margin-bottom:10px'>⚠️ Areas to watch</div>"
+        f"color:#f0a500;margin-bottom:10px'>Areas to watch</div>"
         f"{_bullets(weaknesses, 'No clear weaknesses in this sample yet.')}</div>",
         unsafe_allow_html=True)
 
 
-with tab_prof:
+@st.fragment
+def _fx_prof5():
     st.caption("One player's full card — ratings, signature metrics, shot chart, "
                "game log, league percentiles and a scouting report. Ranks and "
                "percentiles are vs the whole league player pool.")
@@ -5646,3 +5538,7 @@ with tab_prof:
         _ppid = _porder[_ppick]
         _zs, _zg = _pp_zone_tables()
         _render_profile(_ppool[_ppid], _ppid, _prows, _zs, _zg)
+
+
+with tab_prof:
+    _fx_prof5()

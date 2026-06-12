@@ -236,4 +236,17 @@ def finish_game(game_id: int) -> tuple:
     hp, ap = score_from_events(game_id) or (0, 0)
     execute("UPDATE games SET tracked=1, home_score=?, away_score=? WHERE id=?",
             (hp, ap, game_id))
+    # The desktop tracker's persisted on-court five is dead weight once the
+    # game is final — drop it so app_settings doesn't accumulate one row per
+    # game forever.
+    execute("DELETE FROM app_settings WHERE key=?", (f"gt_floor_{game_id}",))
     return hp, ap
+
+
+def reopen_game(game_id: int) -> None:
+    """Un-finalize a game after an accidental End Game: tracked=0 and the
+    frozen score cleared, so live logging can resume. The next finish_game()
+    re-freezes the score from the event stream — a manually corrected final
+    score does NOT survive a reopen/finish cycle."""
+    execute("UPDATE games SET tracked=0, home_score=NULL, away_score=NULL "
+            "WHERE id=?", (game_id,))

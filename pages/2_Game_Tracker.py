@@ -7,6 +7,7 @@ import streamlit as st
 from database.db import query, execute, initialize_database
 from helpers.settings_utils import get_all_settings, apply_page_config
 import helpers.court_geom as CG
+import helpers.game_events as GE
 from PIL import Image
 
 try:
@@ -580,79 +581,44 @@ else:
         # Persist so the form re-opens with the same time/quarter
         st.session_state[f"last_time_{game_id}"] = t
         st.session_state[f"last_q_{game_id}"]    = q
-        prev  = query("SELECT time FROM game_events WHERE game_id=? AND quarter=? ORDER BY id DESC LIMIT 1", (game_id, q))
-        start = time_to_secs(prev[0]["time"]) if prev else (8*60 if q<=4 else 4*60)
-        poss  = max(0.0, start - time_to_secs(t))
 
-        def snapshot_and_apply_pm(event_id: int, scoring_team_id=None, pts: int = 0):
-            """Snapshot the current lineup into game_event_lineup.
-            If a scoring event, credit +/- to on-court players and persist
-            them in game_lineup_players."""
-            for pid, tid in on_court:
-                execute("INSERT OR IGNORE INTO game_event_lineup (event_id, player_id, team_id) VALUES (?,?,?)",
-                        (event_id, pid, tid))
-                execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) VALUES (?,?,?)",
-                        (game_id, tid, pid))
-                if scoring_team_id and pts:
-                    delta = pts if tid == scoring_team_id else -pts
-                    execute("UPDATE game_lineup_players SET plus_minus = plus_minus + ? "
-                            "WHERE game_id=? AND player_id=?", (delta, game_id, pid))
-            for oid in on_court_offs:
-                execute("INSERT OR IGNORE INTO game_lineup_officials (game_id, official_id) VALUES (?,?)",
-                        (game_id, oid))
-
+        # Build the event payload; helpers.game_events owns possession secs,
+        # the lineup snapshot, +/- and x/y -> zone/2-3 (shared with the mobile
+        # tracker API, so both writers stay in lockstep).
+        ev = {"quarter": q, "time": t}
         if event_type == "Shot":
             _xy = st.session_state.get(cap_key)
             _sx, _sy = _xy if _xy else (None, None)
-            eid = execute("""INSERT INTO game_events
-                (game_id,event_type,quarter,time,possession_secs,primary_player_id,
-                 shot_type,shot_result,pass_from_id,shot_created_by_id,
-                 rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (game_id,"shot",q,t,poss,
-                 plookup(shooter,all_id), int(shot_type), result,
-                 plookup(pass_from,all_id), plookup(created,all_id),
-                 plookup(rebound,all_id), plookup(blocked,all_id),
-                 plookup(guarded,all_id), zone, _sx, _sy))
-            sid = plookup(shooter, all_id)
-            scoring_tid = pid_to_team.get(sid) if sid else None
-            snapshot_and_apply_pm(eid, scoring_tid if result=="make" else None,
-                                  int(shot_type) if result=="make" else 0)
+            ev.update(event_type="shot",
+                      primary_player_id=plookup(shooter, all_id),
+                      shot_result=result, shot_x=_sx, shot_y=_sy,
+                      shot_type=int(shot_type), zone=zone,
+                      pass_from_id=plookup(pass_from, all_id),
+                      shot_created_by_id=plookup(created, all_id),
+                      rebound_by_id=plookup(rebound, all_id),
+                      blocked_by_id=plookup(blocked, all_id),
+                      guarded_by_id=plookup(guarded, all_id))
             st.session_state.pop(cap_key, None)   # reset location for next shot
 
         elif event_type == "Free Throw":
-            eid = execute("""INSERT INTO game_events
-                (game_id,event_type,quarter,time,possession_secs,
-                 primary_player_id,shot_result,rebound_by_id)
-                VALUES (?,?,?,?,?,?,?,?)""",
-                (game_id,"free_throw",q,t,poss,
-                 plookup(shooter,all_id), result, plookup(rebound,all_id)))
-            sid = plookup(shooter, all_id)
-            scoring_tid = pid_to_team.get(sid) if sid else None
-            snapshot_and_apply_pm(eid, scoring_tid if result=="make" else None,
-                                  1 if result=="make" else 0)
+            ev.update(event_type="free_throw",
+                      primary_player_id=plookup(shooter, all_id),
+                      shot_result=result,
+                      rebound_by_id=plookup(rebound, all_id))
 
         elif event_type == "Foul":
-            eid = execute("""INSERT INTO game_events
-                (game_id,event_type,quarter,time,possession_secs,
-                 primary_player_id,secondary_player_id,official_id)
-                VALUES (?,?,?,?,?,?,?,?)""",
-                (game_id,"foul",q,t,poss,
-                 plookup(fouled,all_id), plookup(fouler,all_id),
-                 off_eid.get(official) if official and official != "—" else None))
-            snapshot_and_apply_pm(eid)
+            ev.update(event_type="foul",
+                      primary_player_id=plookup(fouled, all_id),
+                      secondary_player_id=plookup(fouler, all_id),
+                      official_id=(off_eid.get(official)
+                                   if official and official != "—" else None))
 
         elif event_type == "Turnover":
-            eid = execute("""INSERT INTO game_events
-                (game_id,event_type,quarter,time,possession_secs,
-                 primary_player_id,stolen_by_id)
-                VALUES (?,?,?,?,?,?,?)""",
-                (game_id,"turnover",q,t,poss,
-                 plookup(tov_p,all_id), plookup(stolen,all_id)))
-            snapshot_and_apply_pm(eid)
+            ev.update(event_type="turnover",
+                      primary_player_id=plookup(tov_p, all_id),
+                      stolen_by_id=plookup(stolen, all_id))
 
-        st.session_state[f"last_time_{game_id}"] = t
-        st.session_state[f"last_q_{game_id}"]    = q
+        GE.log_event(game_id, ev, on_court, on_court_offs)
         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -730,25 +696,8 @@ else:
                        file_name=f"pbp_{game_id}.csv", mime="text/csv", key="dl_pbp")
 
     if st.button("🗑 Delete Last Event", type="secondary"):
-        last = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id DESC LIMIT 1", (game_id,))
-        if last:
-            ev  = last[0]
-            eid = ev["id"]
-            # Reverse +/- if this was a scoring event
-            if ev["event_type"] in ("shot", "free_throw") and ev["shot_result"] == "make":
-                pts = ev["shot_type"] if ev["event_type"] == "shot" else 1
-                scorer_id   = ev["primary_player_id"]
-                scoring_tid = pid_to_team.get(scorer_id) if scorer_id else None
-                if scoring_tid and pts:
-                    gel_rows = query(
-                        "SELECT player_id, team_id FROM game_event_lineup WHERE event_id=?", (eid,))
-                    for row in gel_rows:
-                        pid, tid = row["player_id"], row["team_id"]
-                        reverse_delta = -pts if tid == scoring_tid else pts
-                        execute(
-                            "UPDATE game_lineup_players SET plus_minus = plus_minus + ? "
-                            "WHERE game_id=? AND player_id=?",
-                            (reverse_delta, game_id, pid))
-            execute("DELETE FROM game_events WHERE id=?", (eid,))
+        # Shared undo path (helpers.game_events): reverses +/- over the event's
+        # lineup snapshot, then deletes (cascade clears game_event_lineup).
+        if GE.undo_last_event(game_id):
             st.cache_data.clear()
             st.rerun()

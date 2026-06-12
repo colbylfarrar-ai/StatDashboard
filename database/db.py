@@ -157,6 +157,12 @@ def initialize_database():
             # derived from it, so every zone-based stat keeps working unchanged.
             "ALTER TABLE game_events     ADD COLUMN shot_x       REAL",
             "ALTER TABLE game_events     ADD COLUMN shot_y       REAL",
+            # Idempotency key for the mobile tracker's offline sync: each tap
+            # gets a client-generated UUID so a retried upload (flaky gym wifi)
+            # can never double-insert. NULL for events logged in the app itself.
+            "ALTER TABLE game_events     ADD COLUMN client_uuid  TEXT",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uidx_ge_client_uuid "
+            "ON game_events(client_uuid) WHERE client_uuid IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_glp_game_id       ON game_lineup_players(game_id)",
             "CREATE INDEX IF NOT EXISTS idx_glp_game_player   ON game_lineup_players(game_id, player_id)",
             "CREATE INDEX IF NOT EXISTS idx_glp_player_id     ON game_lineup_players(player_id)",

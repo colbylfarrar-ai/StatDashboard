@@ -19,3 +19,7 @@ streamlit-extras>=0.4
 # renders the half-court image the taps land on.
 streamlit-image-coordinates>=0.1.9
 matplotlib>=3.8
+# Mobile tracker (tracker/api.py): FastAPI serves the offline-first courtside
+# PWA + JSON sync API over the same SQLite DB the Streamlit app uses.
+fastapi>=0.115
+uvicorn>=0.30

@@ -49,6 +49,25 @@ FONT_FAMILY = ("'Segoe UI Variable Display','Segoe UI',-apple-system,"
 _CSS_PATH = _ROOT / "assets" / "style.css"
 
 
+def _sync_external_writes():
+    """Mobile-tracker writes happen in another process, so they can't call
+    st.cache_data.clear() the way the Streamlit pages do. The tracker API bumps
+    app_settings.data_version instead; when this session sees the value move,
+    it clears the global data cache once. First sight in a session just records
+    the value — the ttl=600 on every cache bounds any staleness from before
+    the session started."""
+    from database.db import query
+    try:
+        row = query("SELECT value FROM app_settings WHERE key='data_version'")
+    except Exception:
+        return
+    ver = row[0]["value"] if row else "0"
+    seen = st.session_state.get("_data_version_seen")
+    if seen is not None and seen != ver:
+        st.cache_data.clear()
+    st.session_state["_data_version_seen"] = ver
+
+
 # ── Page boot ───────────────────────────────────────────────────────────────────
 def page_chrome():
     """Standard page boot, returning ``(settings_dict, accent_hex)``.
@@ -59,6 +78,7 @@ def page_chrome():
     ``st.*`` on the page.
     """
     initialize_database()
+    _sync_external_writes()
     cfg = get_all_settings()
     apply_page_config(cfg)
     if _CSS_PATH.exists():

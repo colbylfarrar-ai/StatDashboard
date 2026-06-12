@@ -6,14 +6,26 @@ same SQLite database as the Streamlit app, through the same shared write path
 
 ## Run
 
-From the repo root:
+Easiest — server + public HTTPS tunnel in one window:
+
+```
+powershell -File tracker\start_tracker.ps1
+```
+
+It prints an `https://....trycloudflare.com` URL — open that on any phone,
+anywhere, then Safari → Share → **Add to Home Screen** to install. HTTPS is
+required for the full PWA powers (offline app shell, wake lock). The quick
+tunnel URL changes each restart; a permanent URL needs a named Cloudflare
+tunnel + your own domain.
+
+Manual / same-wifi only:
 
 ```
 python -m uvicorn tracker.api:app --host 0.0.0.0 --port 8500
 ```
 
-Open `http://<laptop-ip>:8500` on a phone on the same wifi. On iPhone/iPad:
-Safari → Share → **Add to Home Screen** to install it as an app.
+Open `http://<laptop-ip>:8500` on a phone on the same wifi. Works for logging,
+but plain HTTP blocks the offline app shell and wake lock (no secure context).
 
 ## Auth
 

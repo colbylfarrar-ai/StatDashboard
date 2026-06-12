@@ -760,10 +760,14 @@ def _matchup_grid(g, tid, _ids):
 #    _fx_over    → tab_over     Overview
 #    _fx_players → tab_players   Players (nested 2PT/3PT sub-tabs inside)
 #    _fx_sched   → tab_sched     Schedule + box-score picker
-#    with tab_charts:  creates 10 sub-tabs (ch_sc sh rb df tr qt adv bld play
-#       impact). Scoring/Shooting/Rebounding/Defense/Trends render INSIDE this
-#       block — they SHARE one computed-once data batch (quarter, qs, cbg, poss,
-#       tb, ob…) and hold no widgets, which is why they are NOT fragmented.
+#    with tab_lab:     creates the 4 ANALYST sub-tabs (ch_adv bld play impact)
+#       — created BEFORE tab_charts so the ch_* names exist for the with-blocks
+#       below; a `with ch_x:` routes output into whichever tab owns the object,
+#       no matter where the block physically sits in the file.
+#    with tab_charts:  creates the 6 game-prep sub-tabs (ch_sc sh rb df tr qt).
+#       Scoring/Shooting/Rebounding/Defense/Trends render INSIDE this block —
+#       they SHARE one computed-once data batch (quarter, qs, cbg, poss, tb,
+#       ob…) and hold no widgets, which is why they are NOT fragmented.
 #       Play Types (_fx_chplay) and Impact Lab (_fx_chimpact) ARE fragments —
 #       each owns a radio, so flipping it reruns only that sub-tab.
 #    _fx_chqt/_fx_chadv/_fx_chbld → ch_qt/ch_adv/ch_bld  (Quarters/Advanced/Build,
@@ -771,11 +775,12 @@ def _matchup_grid(g, tid, _ids):
 #    _fx_scout   → tab_scout     Scout (rendered between Advanced and Build)
 #    tab_gloss   → Glossary
 #    _fx_prof5   → tab_prof      Player Profile — rendered LAST (~L5500)
+#  Scout sits at position 2: it's the second-most-used surface in game prep.
 # ══════════════════════════════════════════════════════════════════════════════
-(tab_over, tab_players, tab_prof, tab_sched, tab_charts,
- tab_scout, tab_gloss) = st.tabs(
-    ["Overview", "Players", "Player Profile", "Schedule", "Charts",
-     "Scout", "Glossary"])
+(tab_over, tab_scout, tab_players, tab_prof, tab_sched, tab_charts,
+ tab_lab, tab_gloss) = st.tabs(
+    ["Overview", "Scout", "Players", "Player Profile", "Schedule", "Charts",
+     "Lab", "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1659,11 +1664,18 @@ with tab_sched:
     _fx_sched()
 
 
+# The analyst toys live under one Lab tab — Scout and the game-prep charts
+# stop competing with the correlation heatmap for a coach's attention. Created
+# before tab_charts so the ch_* objects exist for every with-block below.
+with tab_lab:
+    st.caption("Analyst tools — deeper dives beyond the game-prep core.")
+    (ch_adv, ch_bld, ch_play, ch_impact) = st.tabs(
+        ["Advanced", "Build", "Play Types", "Impact Lab"])
+
 with tab_charts:
-    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_adv, ch_bld,
-     ch_play, ch_impact) = st.tabs(
+    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt) = st.tabs(
         ["Scoring", "Shooting", "Rebounding", "Defense", "Trends",
-         "Quarters", "Advanced", "Build", "Play Types", "Impact Lab"])
+         "Quarters"])
 
     # ───────────────────────────────────────────── PLAY TYPES ──────────────
     # fragment: the Offense/Defense radio lives INSIDE, so flipping it reruns
@@ -3257,7 +3269,9 @@ def _fx_chqt():
             games = max(qbx[q]["n_games"] for q in qs_use)
             return merged, poss_sum, games
 
-        def _shot_row(label, b, poss_q, gp):
+        # Renamed from _shot_row — it shadowed the module-level helper of the
+        # same name (line ~206) inside this function.
+        def _q_shot_row(label, b, poss_q, gp):
             return {
                 "Period": label, "GP": gp,
                 "FGA": b["FGA"], "FGM": b["FGM"], "FG%": _pctf(S.fg_pct(b)),
@@ -3274,23 +3288,23 @@ def _fx_chqt():
         ot = [q for q in qsq if q > 4]
         shot_rows = []
         for q in [x for x in reg if x in (1, 2)]:
-            shot_rows.append(_shot_row(_q_label(q), qbx[q]["team"],
-                                       qbx[q]["poss"], qbx[q]["n_games"]))
+            shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
+                                         qbx[q]["poss"], qbx[q]["n_games"]))
         h1b, h1p, h1g = _merge_qbox([1, 2])
         if h1b:
-            shot_rows.append(_shot_row("H1", h1b, h1p, h1g))
+            shot_rows.append(_q_shot_row("H1", h1b, h1p, h1g))
         for q in [x for x in reg if x in (3, 4)]:
-            shot_rows.append(_shot_row(_q_label(q), qbx[q]["team"],
-                                       qbx[q]["poss"], qbx[q]["n_games"]))
+            shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
+                                         qbx[q]["poss"], qbx[q]["n_games"]))
         h2b, h2p, h2g = _merge_qbox([3, 4])
         if h2b:
-            shot_rows.append(_shot_row("H2", h2b, h2p, h2g))
+            shot_rows.append(_q_shot_row("H2", h2b, h2p, h2g))
         for q in ot:   # overtime periods, each on its own line
-            shot_rows.append(_shot_row(_q_label(q), qbx[q]["team"],
-                                       qbx[q]["poss"], qbx[q]["n_games"]))
+            shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
+                                         qbx[q]["poss"], qbx[q]["n_games"]))
         fb, fp, fg = _merge_qbox(qsq)
         if fb:
-            shot_rows.append(_shot_row("Full", fb, fp, fg))
+            shot_rows.append(_q_shot_row("Full", fb, fp, fg))
         st.dataframe(pd.DataFrame(shot_rows), hide_index=True, width="stretch")
         st.caption("Full shooting line for every quarter, half (H1/H2) and the "
                    "whole game (pooled over tracked games). PPP = points per "

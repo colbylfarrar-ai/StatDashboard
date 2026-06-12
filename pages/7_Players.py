@@ -996,12 +996,22 @@ def _fx_cmp():
         shc = st.columns(2)
         for col, P, sfx in ((shc[0], A, "a"), (shc[1], B, "b")):
             p_pid = next(k for k, v in by_pid.items() if v is P)
-            fig, ok = _shot_chart(zsplits.get(p_pid, {}), P["name"], height=380)
+            p_shots = _player_located(p_pid)
             with col:
-                if ok:
+                if p_shots:
+                    fig, _n = _shot_map(
+                        p_shots, f"{P['name']} · {len(p_shots)} located",
+                        height=380)
                     st.plotly_chart(fig, width="stretch", key=f"cmp_court_{sfx}")
                 else:
-                    st.caption(f"{P['name']}: no located shots.")
+                    fig, ok = _shot_chart(zsplits.get(p_pid, {}), P["name"],
+                                          height=380)
+                    if ok:
+                        st.plotly_chart(fig, width="stretch",
+                                        key=f"cmp_court_{sfx}")
+                    else:
+                        st.caption(f"{P['name']}: no shot locations or zones "
+                                   "logged yet.")
 
         # side-by-side percentile bars vs the pool
         st.markdown("<div class='pl-hdr'>League percentiles</div>",
@@ -1211,15 +1221,36 @@ def _fx_prof():
     st.markdown("<div class='pl-hdr'>Shot chart</div>", unsafe_allow_html=True)
     sc_l, sc_r = st.columns([3, 2])
     with sc_l:
-        fig, ok = _shot_chart(zsplits.get(pid, {}), f"{P['name']} — FG% by zone")
-        if ok:
+        # Real x/y map when tap-captured shots exist (same branch the Shot Lab
+        # uses); the zone bubbles stay as the legacy fallback.
+        p_shots = _player_located(pid)
+        if p_shots:
+            fig, _n = _shot_map(p_shots, f"{P['name']} — shot map · "
+                                         f"{len(p_shots)} located")
             st.plotly_chart(fig, width="stretch", key="prof_court")
-            st.caption("≥45% · 30–44% · <30% · bubble size = attempts · "
-                       "center 2PT = paint proxy.")
+            _ls = S.shot_location_summary(p_shots)
+            if _ls:
+                def _seg(lbl, n, fg):
+                    return f"{lbl} {n}" + (f" ({fg*100:.0f}%)" if fg is not None
+                                           else "")
+                st.caption(
+                    f"Avg distance **{_ls['avg_dist']:.1f} ft** · "
+                    + _seg("Rim", _ls["rim_n"], _ls["rim_fg"]) + " · "
+                    + _seg("Mid", _ls["mid_n"], _ls["mid_fg"]) + " · "
+                    + _seg("Three", _ls["three_n"], _ls["three_fg"]))
         else:
-            empty_state("No located shots yet",
-                        "Tap shots in the Game Tracker to build this player's "
-                        "shot chart.")
+            fig, ok = _shot_chart(zsplits.get(pid, {}),
+                                  f"{P['name']} — FG% by zone")
+            if ok:
+                st.plotly_chart(fig, width="stretch", key="prof_court")
+                st.caption("Zone chart (older games) — ≥45% · 30–44% · <30% · "
+                           "bubble size = attempts. Tap-captured shots show "
+                           "here as a precise shot map.")
+            else:
+                empty_state("No shot locations yet",
+                            "Shots logged with a court tap (phone or Game "
+                            "Tracker) build the shot map; zone-only shots "
+                            "feed the zone chart.")
     with sc_r:
         st.markdown("**Hot zones**")
         pz = zsplits.get(pid, {})

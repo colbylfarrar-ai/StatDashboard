@@ -161,6 +161,11 @@ def initialize_database():
             # gets a client-generated UUID so a retried upload (flaky gym wifi)
             # can never double-insert. NULL for events logged in the app itself.
             "ALTER TABLE game_events     ADD COLUMN client_uuid  TEXT",
+            # Hygiene: rows retyped away from "shot" before update_event learned
+            # to clear the tap location kept stale x/y — scrub them so a later
+            # flip back to "shot" can't resurrect a wrong court spot.
+            "UPDATE game_events SET shot_x=NULL, shot_y=NULL "
+            "WHERE event_type != 'shot' AND shot_x IS NOT NULL",
             "CREATE UNIQUE INDEX IF NOT EXISTS uidx_ge_client_uuid "
             "ON game_events(client_uuid) WHERE client_uuid IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_glp_game_id       ON game_lineup_players(game_id)",

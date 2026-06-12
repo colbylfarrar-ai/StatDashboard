@@ -46,7 +46,9 @@ from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
                            gauge_dial as _pp_gauge, gauge_range, bar_h)
-from helpers.court import shot_chart as _shot_chart, hot_zones as _hot_zones
+from helpers.court import (shot_chart as _shot_chart, hot_zones as _hot_zones,
+                           shot_map as _shot_map, shot_hexbin as _shot_hexbin,
+                           zone_leader_map as _zone_leader_map)
 from helpers.glossary import glossary_tab
 import helpers.team_analytics as TA
 import helpers.team_ratings as TR
@@ -577,6 +579,20 @@ def _gender_tracked_ids(g):
            WHERE g.tracked = 1 AND g.home_score IS NOT NULL
              AND g.away_score IS NOT NULL AND t.gender = ?""", (g,))
     return [r["id"] for r in rows]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _located_team(tid, gids):
+    """Tap-captured x/y shots for one team over its tracked games."""
+    return S.located_shots(game_ids=list(gids), team_id=tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _league_pps_located(g):
+    """League-wide points-per-shot over located shots — the hexbin midpoint."""
+    shots = S.located_shots(game_ids=_gender_tracked_ids(g))
+    return (sum(s["value"] for s in shots if s["make"]) / len(shots)
+            if shots else None)
 
 
 @st.cache_data(ttl=600, show_spinner="Computing RAPM…")
@@ -1477,52 +1493,9 @@ def _fx_players():
                     unsafe_allow_html=True)
         pzl = bundle.get("player_zone_leaders")
         if pzl and any(pzl.values()):
-            ZPOS = {"LC": (-21, 4), "LW": (-15, 21), "C": (0, 8),
-                    "RW": (15, 21), "RC": (21, 4)}
-            hz = go.Figure()
-            hz.add_shape(type="rect", x0=-25, y0=0, x1=25, y1=31,
-                         line=dict(color="#30363d", width=1))
-            hz.add_shape(type="rect", x0=-8, y0=0, x1=8, y1=19,
-                         line=dict(color="#30363d", width=1))
-            hz.add_shape(type="circle", x0=-6, y0=13, x1=6, y1=25,
-                         line=dict(color="#30363d", width=1))
-            qz = [z for z in TA.ZONES if pzl.get(z)]
-            nz = [z for z in TA.ZONES if not pzl.get(z)]
-            if qz:
-                hz.add_trace(go.Scatter(
-                    x=[ZPOS[z][0] for z in qz], y=[ZPOS[z][1] for z in qz],
-                    mode="markers+text",
-                    marker=dict(size=66, color=[pzl[z]["pct"] * 100 for z in qz],
-                                colorscale=DIVERGE, cmin=25, cmax=65,
-                                showscale=True, colorbar=dict(title="FG%"),
-                                line=dict(color="#0d1117", width=2)),
-                    text=[f"#{pzl[z]['number']} "
-                          f"{pzl[z]['name'].split()[-1]}<br>"
-                          f"{pzl[z]['pct']*100:.0f}% "
-                          f"({pzl[z]['FGM']}/{pzl[z]['FGA']})" for z in qz],
-                    textfont=dict(size=10, color="#f0f6fc"),
-                    textposition="middle center",
-                    hovertext=[f"{TA.ZONE_LABELS[z]}<br>#{pzl[z]['number']} "
-                               f"{pzl[z]['name']}<br>{pzl[z]['FGM']}/"
-                               f"{pzl[z]['FGA']} · {pzl[z]['pct']*100:.0f}%"
-                               for z in qz],
-                    hovertemplate="%{hovertext}<extra></extra>"))
-            if nz:
-                hz.add_trace(go.Scatter(
-                    x=[ZPOS[z][0] for z in nz], y=[ZPOS[z][1] for z in nz],
-                    mode="markers+text",
-                    marker=dict(size=66, color="#30363d",
-                                line=dict(color="#0d1117", width=2)),
-                    text=["—"] * len(nz), textposition="middle center",
-                    textfont=dict(size=11, color="#8b949e"),
-                    hovertext=[f"{TA.ZONE_LABELS[z]}<br>no qualifier (<3 att)"
-                               for z in nz],
-                    hovertemplate="%{hovertext}<extra></extra>"))
-            hz.update_xaxes(visible=False, range=[-27, 27])
-            hz.update_yaxes(visible=False, range=[-2, 33])
-            _style(hz, 420)
-            hz.update_layout(showlegend=False, plot_bgcolor="rgba(0,0,0,0)",
-                             margin=dict(l=10, r=10, t=10, b=10))
+            # Rendered on the real half-court (helpers/court.py) instead of the
+            # old hand-drawn rectangles.
+            hz, _ = _zone_leader_map(pzl, title="", colorscale=DIVERGE)
             st.plotly_chart(hz, width="stretch", key="pl_zone_best")
             st.caption("Each zone shows the teammate with the best FG% there "
                        "(≥3 located attempts), colored by make rate — the go-to "
@@ -2003,16 +1976,36 @@ with tab_charts:
                                  margin=dict(l=10, r=10, t=10, b=10))
                 return hz
 
-            st.markdown("**Hot zone maps** — size = volume, color = FG%")
-            hz1, hz2 = st.columns(2)
-            with hz1:
-                st.caption("2-pointers")
-                st.plotly_chart(_hotcourt(zbt["2"], "2"), width="stretch",
-                                key="sh_hot2")
-            with hz2:
-                st.caption("3-pointers")
-                st.plotly_chart(_hotcourt(zbt["3"], "3", zpos=ZPOS3, lbl=short3),
-                                width="stretch", key="sh_hot3")
+            # Real x/y shot charts when tap-captured locations exist; the
+            # hand-positioned zone bubbles stay as the legacy fallback for
+            # seasons logged before tap capture.
+            _td_shots = _located_team(team_id, tuple(bundle["tracked_ids"]))
+            if _td_shots:
+                st.markdown(f"**Shot chart** — {len(_td_shots)} tap-captured "
+                            "attempts")
+                hz1, hz2 = st.columns(2)
+                with hz1:
+                    _hxf, _hxn = _shot_hexbin(
+                        _td_shots, title="Volume & points per shot",
+                        league_pps=_league_pps_located(gender))
+                    st.plotly_chart(_hxf, width="stretch", key="sh_hexbin")
+                with hz2:
+                    _smf, _ = _shot_map(_td_shots, title="Makes & misses")
+                    st.plotly_chart(_smf, width="stretch", key="sh_dotmap")
+                st.caption("Hexagon size = attempts, color = points per shot "
+                           "vs league average. Dots are individual shots — "
+                           "green make, red ✕ miss.")
+            else:
+                st.markdown("**Hot zone maps** — size = volume, color = FG%")
+                hz1, hz2 = st.columns(2)
+                with hz1:
+                    st.caption("2-pointers")
+                    st.plotly_chart(_hotcourt(zbt["2"], "2"), width="stretch",
+                                    key="sh_hot2")
+                with hz2:
+                    st.caption("3-pointers")
+                    st.plotly_chart(_hotcourt(zbt["3"], "3", zpos=ZPOS3, lbl=short3),
+                                    width="stretch", key="sh_hot3")
 
             # ── actual vs expected FG% by zone — 2s and 3s ──────────────────
             st.markdown("**Actual vs expected FG% by zone**")
@@ -4245,6 +4238,18 @@ def _fx_scout():
                 + (f"<br><span style='font-size:12px;color:#8b949e'>"
                    f"{html.escape(bdg)}</span>" if bdg else "")
                 + "</div>", unsafe_allow_html=True)
+
+    # ── where they shoot from (real x/y chart when tap data exists) ──────────
+    if has_tracked:
+        _sc_shots = _located_team(team_id, tuple(bundle["tracked_ids"]))
+        if _sc_shots:
+            st.markdown("<div class='lab-hdr'>Shot chart</div>",
+                        unsafe_allow_html=True)
+            _scf, _ = _shot_map(_sc_shots,
+                                title=f"{len(_sc_shots)} located attempts")
+            st.plotly_chart(_scf, width="stretch", key="scout_shotmap")
+            st.caption("Every tap-captured attempt this season — the spots to "
+                       "take away.")
 
     # ── shooting by zone (2s vs 3s) ─────────────────────────────────────────
     if has_tracked and bundle.get("zones_by_type"):

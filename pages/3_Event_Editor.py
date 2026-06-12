@@ -18,9 +18,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import streamlit as st
+from PIL import Image
 
 from helpers.ui import page_chrome, page_header, empty_state
+import helpers.court_geom as CG
 import helpers.event_log as EL
+
+try:
+    from streamlit_image_coordinates import streamlit_image_coordinates
+    _HAVE_IMG_COORDS = True
+except Exception:
+    _HAVE_IMG_COORDS = False
 
 _cfg, ACCENT = page_chrome("Event Editor")
 
@@ -32,6 +40,10 @@ page_header("Event Editor",
                 "for changed baskets and keep lineup stats valid; deletes cascade their "
                 "on-court snapshot. Adding brand-new events is still done in the Game "
                 "Tracker (a new event needs its on-floor lineup).")
+
+# Flash messages stashed by the save handlers before their st.rerun()
+for _k, _m in st.session_state.pop("ee_flash", []):
+    getattr(st, _k)(_m)
 
 games = EL.games_with_events()
 if not games:
@@ -123,7 +135,9 @@ orig_by_id = {e["id"]: e for e in events}
 
 st.caption("**Primary** = shooter (shot/FT) · player fouled (foul) · player who "
            "lost it (turnover). **Fouler** = who committed the foul. Tick "
-           "**Delete?** to remove a row. Player picks are limited to both rosters.")
+           "**Delete?** to remove a row. Player picks are limited to both rosters. "
+           "For tap-captured shots, Zone and 2/3 follow the stored location — "
+           "move the shot in **Fix a shot location** below instead.")
 
 edited = st.data_editor(
     grid, hide_index=True, width="stretch", key=f"ee_grid_{gid}_{qpick}",
@@ -156,6 +170,7 @@ edited = st.data_editor(
 if st.button("💾 Save changes", type="primary", key="ee_save"):
     updated = deleted = 0
     bad_times = []
+    loc_locked = 0
     for _, r in edited.iterrows():
         eid = int(r["id"])
         ev = orig_by_id.get(eid)
@@ -181,6 +196,24 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
             "stolen_by_id": label2pid.get(r["Stolen"]),
             "official_id": name2oid.get(r["Official"]),
         }
+        # Tap-captured shots: the stored x/y is the source of truth for WHERE,
+        # so a manual Zone/2-3 dropdown change re-derives from the location
+        # instead (move the shot in the fixer below). Only rows the user
+        # actually edited are touched — older shots whose zone/2-3 were
+        # legitimately hand-corrected (foot-on-the-line 3 → 2) before the
+        # fixer existed are never auto-rewritten by an unrelated save.
+        if (ev["event_type"] == "shot" and vals["event_type"] == "shot"
+                and ev["shot_x"] is not None and ev["shot_y"] is not None):
+            _zone_touched = (
+                str(r["Zone"]) != (ev["zone"] or "—")
+                or str(r["ShotType"]) != (str(ev["shot_type"])
+                                          if ev["shot_type"] else "—"))
+            if _zone_touched:
+                _dz = CG.zone_from_xy(ev["shot_x"], ev["shot_y"])
+                _dv = CG.shot_value(ev["shot_x"], ev["shot_y"])
+                if vals["zone"] != _dz or vals["shot_type"] != _dv:
+                    loc_locked += 1
+                vals["zone"], vals["shot_type"] = _dz, _dv
         if EL.event_changed(ev, vals):
             # Clock sanity — "12:99" would poison elapsed-time / +/- math.
             if not _TIME_RE.match(str(r["Time"]).strip()):
@@ -188,15 +221,132 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
                 continue
             EL.update_event(gid, eid, vals, pid2team)
             updated += 1
+    # Messages must survive the st.rerun() that reloads the grid — stash them
+    # as a flash list rendered at the top of the next run.
+    _flash = []
+    if loc_locked:
+        _flash.append(("warning",
+                       f"{loc_locked} shot(s) kept the zone/2-3 derived from "
+                       "their tap location — use **Fix a shot location** below "
+                       "to move a mistapped shot."))
     if bad_times:
         st.error("Skipped row(s) with an invalid clock time — use M:SS with "
                  "seconds 00–59 (e.g. 8:04): " + "; ".join(bad_times)
                  + ". Fix those rows and save again.")
     if updated or deleted:
         st.cache_data.clear()
-        st.success(f"Saved — {updated} edited, {deleted} deleted. "
-                   "Recompute the final score above if it drifted.")
-        if not bad_times:   # no rerun — keep the skipped-row error visible
+        _flash.insert(0, ("success",
+                          f"Saved — {updated} edited, {deleted} deleted. "
+                          "Recompute the final score above if it drifted."))
+        if bad_times:   # no rerun — keep the skipped-row error visible
+            for _k, _m in _flash:
+                getattr(st, _k)(_m)
+        else:
+            st.session_state["ee_flash"] = _flash
             st.rerun()
-    elif not bad_times:
-        st.info("No changes to save.")
+    else:
+        for _k, _m in _flash:
+            getattr(st, _k)(_m)
+        if not bad_times and not loc_locked:
+            st.info("No changes to save.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FIX A SHOT LOCATION — move a mistapped shot, or add a location to a legacy
+#  zone-only shot. The x/y is the source of truth: zone + 2/3 re-derive from it
+#  (helpers/event_log.set_shot_location), +/- shifts if a made 2<->3 flips, and
+#  the drift banner above offers the score recompute when needed.
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+st.markdown("### Fix a shot location")
+
+_shot_evs = [e for e in events if e["event_type"] == "shot"]
+if not _shot_evs:
+    st.caption("No shots in this view — pick another quarter or game above.")
+elif not _HAVE_IMG_COORDS:
+    st.caption("Tap-to-fix needs the `streamlit-image-coordinates` package "
+               "(the Game Tracker court uses the same one).")
+else:
+    @st.cache_resource(show_spinner=False)
+    def _ee_court_base(width):
+        return CG.court_image(width)
+
+    def _fx_label(e):
+        who = pid2label.get(e["primary_player_id"], "—")
+        res = "✓ make" if e["shot_result"] == "make" else "✕ miss"
+        loc = (f"{e['zone'] or '?'} · located" if e["shot_x"] is not None
+               else f"{e['zone'] or '?'} · NO location")
+        return (f"Q{e['quarter']} {e['time']} · {who} · {res} · "
+                f"{e['shot_type'] or '?'}PT · {loc}")
+
+    # Saving changes the option labels, which resets the widget — re-land on
+    # the same shot via the remembered event id instead of jumping to row 0.
+    _last_id = st.session_state.get("ee_fix_last")
+    _idx = next((i for i, e in enumerate(_shot_evs) if e["id"] == _last_id), 0)
+    fx = st.selectbox("Shot to move", _shot_evs, index=_idx,
+                      format_func=_fx_label, key=f"ee_fix_pick_{gid}_{qpick}")
+    st.session_state["ee_fix_last"] = fx["id"]
+    # Switching shots drops any uncommitted tap from the previous one — a
+    # stale pending coordinate must never sit armed behind Save.
+    if st.session_state.get("ee_fix_prev") != fx["id"]:
+        for _sk in [k for k in st.session_state
+                    if str(k).startswith(f"ee_fix_xy_{gid}_")]:
+            st.session_state.pop(_sk)
+        st.session_state["ee_fix_prev"] = fx["id"]
+    _fx_key = f"ee_fix_xy_{gid}_{fx['id']}"
+    _fx_gen = st.session_state.get(f"ee_tapgen_{gid}", 0)
+    _pending = st.session_state.get(_fx_key)
+
+    fc_l, fc_r = st.columns([1, 2])
+    with fc_l:
+        W = 340
+        H = CG.image_height(W)
+        base = _ee_court_base(W)
+        mark = _pending or ((fx["shot_x"], fx["shot_y"])
+                            if fx["shot_x"] is not None else None)
+        shown = (CG.court_image_with_marker(mark[0], mark[1], base=base, width=W)
+                 if mark else base)
+        disp = shown.transpose(Image.TRANSPOSE)
+        st.caption("Tap where the shot was actually taken")
+        val = streamlit_image_coordinates(disp, width=disp.width,
+                                          key=f"ee_court_{fx['id']}_{_fx_gen}")
+        if val is not None:
+            ox, oy = val["y"], val["x"]      # invert the transpose
+            fxy = CG.feet_from_px(ox, oy, W, H)
+            if (_pending is None or abs(_pending[0] - fxy[0]) > 1e-6
+                    or abs(_pending[1] - fxy[1]) > 1e-6):
+                st.session_state[_fx_key] = fxy
+                st.rerun()
+
+    with fc_r:
+        if fx["shot_x"] is not None:
+            st.markdown(f"Stored: **{fx['shot_type']}PT · {fx['zone']}** · "
+                        f"{CG.shot_distance(fx['shot_x'], fx['shot_y']):.0f} ft")
+        else:
+            st.markdown(f"Stored: **{fx['shot_type'] or '?'}PT · "
+                        f"{fx['zone'] or 'no zone'}** — no tap location yet")
+        if _pending:
+            st.markdown(f"New spot: **{CG.shot_value(*_pending)}PT · "
+                        f"{CG.zone_from_xy(*_pending)}** · "
+                        f"{CG.shot_distance(*_pending):.0f} ft")
+            sv1, sv2 = st.columns(2)
+            if sv1.button("Save location", type="primary", key="ee_fix_save"):
+                EL.set_shot_location(gid, fx["id"], _pending[0], _pending[1],
+                                     pid2team)
+                st.session_state.pop(_fx_key, None)
+                st.session_state[f"ee_tapgen_{gid}"] = _fx_gen + 1
+                st.session_state["ee_flash"] = [
+                    ("success", "Shot location updated — zone and 2/3 "
+                                "re-derived. Recompute the final score above "
+                                "if the drift banner appears.")]
+                st.cache_data.clear()
+                st.rerun()
+            if sv2.button("Discard tap", key="ee_fix_discard"):
+                st.session_state.pop(_fx_key, None)
+                st.session_state[f"ee_tapgen_{gid}"] = _fx_gen + 1
+                st.rerun()
+        else:
+            st.caption("Tap the court to pick the corrected spot — zone and "
+                       "2/3 re-derive automatically, and a 2↔3 flip on a made "
+                       "shot updates +/- (recompute the score above if the "
+                       "drift banner appears).")

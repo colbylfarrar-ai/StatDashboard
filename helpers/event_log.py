@@ -15,11 +15,12 @@ data consistent:
   * recompute_final_score() re-freezes games.home/away_score from the events, so
     records & rankings line up with the corrected log.
 
-Pure data layer: database.db only, no streamlit.
+Pure data layer: database.db + court_geom (math only), no streamlit.
 """
 from __future__ import annotations
 
 from database.db import query, execute
+import helpers.court_geom as CG
 
 ZONES = ("LC", "LW", "C", "RW", "RC")
 EVENT_TYPES = ("shot", "free_throw", "foul", "turnover")
@@ -212,13 +213,42 @@ def update_event(game_id, ev_id, vals, pid2team):
                     pid2team.get(old["primary_player_id"]),
                     new_pts, pid2team.get(clean["primary_player_id"]))
 
+    # shot_x/shot_y aren't editor-managed fields, but they must not survive a
+    # type change: a stale tap location on a row later flipped back to "shot"
+    # would resurrect on every shot chart and override the user's zone/2-3.
     execute(
         "UPDATE game_events SET event_type=?, quarter=?, time=?, "
         + ", ".join(f"{f}=?" for f in _ALL_FIELDS)
+        + (", shot_x=NULL, shot_y=NULL" if etype != "shot" else "")
         + " WHERE id=?",
         (etype, int(vals.get("quarter") or old["quarter"]),
          str(vals.get("time") or old["time"]),
          *[clean[f] for f in _ALL_FIELDS], ev_id))
+
+
+def set_shot_location(game_id, ev_id, x, y, pid2team):
+    """Move a shot's tap-captured location (the mistap fixer). The x/y court-feet
+    are the source of truth for WHERE: zone and 2/3 are re-derived from them —
+    the same rule log_event applies — and +/- shifts when a made shot's value
+    flips 2<->3. Returns the (zone, shot_type) now stored, or None if the event
+    isn't a shot. Callers handle score drift the same way as other edits
+    (recompute_final_score / the editor's drift banner)."""
+    old = query("SELECT * FROM game_events WHERE id=? AND game_id=?",
+                (ev_id, game_id))
+    if not old or old[0]["event_type"] != "shot":
+        return None
+    old = old[0]
+    zone = CG.zone_from_xy(x, y)
+    val = CG.shot_value(x, y)
+    stid = pid2team.get(old["primary_player_id"])
+    old_pts = event_points(old)
+    new_pts = event_points({"event_type": "shot",
+                            "shot_result": old["shot_result"],
+                            "shot_type": val})
+    _apply_pm_delta(game_id, ev_id, old_pts, stid, new_pts, stid)
+    execute("UPDATE game_events SET shot_x=?, shot_y=?, zone=?, shot_type=? "
+            "WHERE id=?", (float(x), float(y), zone, val, ev_id))
+    return zone, val
 
 
 def delete_event(game_id, ev_id, pid2team):

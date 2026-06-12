@@ -4,17 +4,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import streamlit as st
-from database.db import query, execute, initialize_database, normalize_date
-from helpers.settings_utils import get_all_settings, apply_page_config
+from database.db import query, execute, normalize_date
+from helpers.ui import page_chrome, page_header
 
-initialize_database()
-_cfg = get_all_settings()
-apply_page_config(_cfg, "Input Hub")
+_cfg, ACCENT = page_chrome("Input Hub")
 
-from helpers.auth import require_login
-require_login()
-
-st.title("Input Hub")
+page_header("Input Hub")
 
 # Render messages queued before an st.rerun (an inline message would be wiped).
 for _level, _msg in st.session_state.pop("_flash", []):
@@ -182,7 +177,7 @@ with st.expander("New Season", expanded=False):
         execute("UPDATE players SET archived=1, season=? WHERE archived=0", (lbl,))
         execute("UPDATE schedule SET season=? WHERE season='Current'", (lbl,))
         invalidate("_players_orig", "players_editor", "_sched_orig", "sched_editor")
-        st.success(f"Season '{lbl}' archived. Add new rosters and schedules to start fresh.")
+        flash("success", f"Season '{lbl}' archived. Add new rosters and schedules to start fresh.")
         st.cache_data.clear()
         st.rerun()
 
@@ -389,7 +384,9 @@ with tab_games:
                 flash("success", "Saved!")
                 for _w in skipped:
                     flash("warning", _w)
-                invalidate("_games_orig", "games_editor")
+                # Same games table as the Team Schedule tab — drop its cached
+                # editor frame too so it can't save stale rows back over this edit.
+                invalidate("_games_orig", "games_editor", "_sched_orig", "sched_editor")
                 st.cache_data.clear()
                 st.rerun()
 

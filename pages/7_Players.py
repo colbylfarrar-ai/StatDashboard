@@ -29,8 +29,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
-from helpers.ui import (page_chrome, rgb as _rgb, style_fig as _style,
-                        CARD_BG, GRID, PALETTE, gender_radio, grid as _grid)
+from helpers.ui import (page_chrome, page_header, empty_state, rgb as _rgb,
+                        style_fig as _style, CARD_BG, GRID, HEAT, PALETTE,
+                        gender_radio, grid as _grid)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
@@ -254,12 +255,9 @@ def _spotlight(num, label, sub=""):
 #  HEADER + CONTROLS
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.markdown(
-    f"<div class='lab-hero'>"
-    f"<div class='lab-hero-name' style='color:{ACCENT}'>PLAYER ANALYTICS LAB</div>"
-    f"<div class='lab-hero-sub'>Every tracked stat · shot charts · 0-100 ratings · "
-    f"invented metrics — all built from play-by-play events.</div></div>",
-    unsafe_allow_html=True)
+page_header("Player Analytics Lab",
+            sub="Every tracked stat · shot charts · 0-100 ratings · "
+                "invented metrics — all built from play-by-play events.")
 
 c1, c2 = st.columns([1, 2])
 gender = gender_radio(c1)
@@ -294,8 +292,10 @@ def _agg_zone(pids, zsplits):
 
 table = _stat_table(gender, min_games)
 if not table:
-    st.info("No eligible players for this league / games filter yet. Track some "
-            "games in the Game Tracker and they'll show up here.")
+    empty_state("No eligible players yet",
+                "No players clear this league / games filter yet. Track some "
+                "games in the Game Tracker and they'll show up here.",
+                cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     st.stop()
 
 rows = sorted(table.values(), key=lambda r: (r["Rank"] or 1e9))
@@ -474,7 +474,7 @@ with tab_lead:
         sc = go.Figure(go.Scatter(
             x=off, y=deff, mode="markers", text=names,
             hovertemplate="%{text}<br>OFF %{x:.1f} · DEF %{y:.1f}<extra></extra>",
-            marker=dict(size=10, color=ovr, colorscale="Viridis",
+            marker=dict(size=10, color=ovr, colorscale=HEAT,
                         showscale=True, colorbar=dict(title="OVR"),
                         line=dict(width=1, color="#30363d"))))
         sc.add_vline(x=50, line=dict(color="#30363d", dash="dot"))
@@ -529,7 +529,7 @@ with tab_lead:
             hovertemplate="%{text}<br>USG %{x:.1f}% · TS %{y:.1f}%<extra></extra>",
             marker=dict(size=[max(7, r["PPG"] * 1.4) for r in ue],
                         color=[r["OVERALL"] or 50 for r in ue],
-                        colorscale="Viridis", showscale=True,
+                        colorscale=HEAT, showscale=True,
                         colorbar=dict(title="OVR"),
                         line=dict(width=1, color="#30363d"))))
         ufig.update_xaxes(title="Usage % (share of team possessions) →")
@@ -553,7 +553,7 @@ with tab_lead:
         hm = go.Figure(go.Heatmap(
             z=z, x=[lbl for _, lbl in HM_COLS],
             y=[r["name"] for r in top_n], text=txt, texttemplate="%{text}",
-            textfont=dict(size=9), colorscale="Viridis", zmin=0, zmax=100,
+            textfont=dict(size=9), colorscale=HEAT, zmin=0, zmax=100,
             colorbar=dict(title="pctile"),
             hovertemplate="%{y} · %{x}<br>%{z}th pctile (%{text})<extra></extra>"))
         hm.update_layout(template="plotly_dark", height=max(360, 26 * len(top_n)),
@@ -577,7 +577,7 @@ with tab_lead:
         } for r in pc_rows])
         pcf = px.parallel_coordinates(
             pdf, dimensions=["OFF", "DEF", "PLY", "REB", "VERS"],
-            color="OVERALL", color_continuous_scale=px.colors.sequential.Viridis,
+            color="OVERALL", color_continuous_scale=HEAT,
             range_color=[40, max(70, pdf["OVERALL"].max())])
         pcf.update_layout(template="plotly_dark", height=400,
                           paper_bgcolor="rgba(0,0,0,0)",
@@ -646,81 +646,95 @@ with tab_rate:
             col.metric(key, f"{ld[0][key]:.1f}")
             col.caption(ld[0]["name"])
 
-    # ── Best per class ────────────────────────────────────────────────────────
-    st.markdown("<div class='pl-hdr'>Best in each class</div>",
-                unsafe_allow_html=True)
-    pick_rate = st.selectbox("Rating", rcols, key="rate_pick")
+    # ── Best per class (fragment — the rating picker reruns only this block) ──
+    @st.fragment
+    def _fx_rate_best():
+        st.markdown("<div class='pl-hdr'>Best in each class</div>",
+                    unsafe_allow_html=True)
+        pick_rate = st.selectbox("Rating", rcols, key="rate_pick")
 
-    podium = _leaders(rows, pick_rate, n=3)
-    if podium:
-        _podium(podium, pick_rate, "f1")
-        st.markdown("<br>", unsafe_allow_html=True)
+        podium = _leaders(rows, pick_rate, n=3)
+        if podium:
+            _podium(podium, pick_rate, "f1")
+            st.markdown("<br>", unsafe_allow_html=True)
 
-    lc, rc = st.columns(2)
-    with lc:
-        st.markdown(f"**Top 10 — {pick_rate}**")
-        top = _leaders(rows, pick_rate, n=10)
-        st.dataframe(
-            pd.DataFrame([{"#": i, "Player": r["name"], "Team": r["team"],
-                           "Cls": r["class"], pick_rate: r[pick_rate]}
-                          for i, r in enumerate(top, 1)]),
-            hide_index=True, width="stretch")
-    with rc:
-        st.markdown(f"**Class champions — {pick_rate}**")
-        by_class = defaultdict(list)
-        for r in rows:
-            if r[pick_rate] is not None:
-                by_class[r["class"]].append(r)
-        champ_rows = []
-        for cls in sorted(by_class, key=lambda c: TR._CLASS_RANK.get(c, 99)):
-            best = max(by_class[cls], key=lambda r: r[pick_rate])
-            champ_rows.append({"Class": cls, "Player": best["name"],
-                               "Team": best["team"], pick_rate: best[pick_rate]})
-        if champ_rows:
-            ch = go.Figure(go.Bar(
-                x=[c["Class"] for c in champ_rows],
-                y=[c[pick_rate] for c in champ_rows],
-                marker_color=ACCENT, marker_line_width=0,
-                text=[f"{c['Player']}<br>{c[pick_rate]:.1f}" for c in champ_rows],
-                textposition="auto", textfont=dict(size=10),
-                hovertemplate="%{x}: %{text}<extra></extra>"))
-            ch.add_hline(y=50, line=dict(color="#8b949e", dash="dot"))
-            ch.update_yaxes(title=pick_rate, range=[0, 100])
-            ch.update_xaxes(title="Class")
-            _style(ch, 320)
-            st.plotly_chart(ch, width="stretch", key="rate_class")
+        lc, rc = st.columns(2)
+        with lc:
+            st.markdown(f"**Top 10 — {pick_rate}**")
+            top = _leaders(rows, pick_rate, n=10)
+            st.dataframe(
+                pd.DataFrame([{"#": i, "Player": r["name"], "Team": r["team"],
+                               "Cls": r["class"], pick_rate: r[pick_rate]}
+                              for i, r in enumerate(top, 1)]),
+                hide_index=True, width="stretch")
+        with rc:
+            st.markdown(f"**Class champions — {pick_rate}**")
+            by_class = defaultdict(list)
+            for r in rows:
+                if r[pick_rate] is not None:
+                    by_class[r["class"]].append(r)
+            champ_rows = []
+            for cls in sorted(by_class, key=lambda c: TR._CLASS_RANK.get(c, 99)):
+                best = max(by_class[cls], key=lambda r: r[pick_rate])
+                champ_rows.append({"Class": cls, "Player": best["name"],
+                                   "Team": best["team"], pick_rate: best[pick_rate]})
+            if champ_rows:
+                ch = go.Figure(go.Bar(
+                    x=[c["Class"] for c in champ_rows],
+                    y=[c[pick_rate] for c in champ_rows],
+                    marker_color=ACCENT, marker_line_width=0,
+                    text=[f"{c['Player']}<br>{c[pick_rate]:.1f}" for c in champ_rows],
+                    textposition="auto", textfont=dict(size=10),
+                    hovertemplate="%{x}: %{text}<extra></extra>"))
+                ch.add_hline(y=50, line=dict(color="#8b949e", dash="dot"))
+                ch.update_yaxes(title=pick_rate, range=[0, 100])
+                ch.update_xaxes(title="Class")
+                _style(ch, 320)
+                st.plotly_chart(ch, width="stretch", key="rate_class")
+
+    _fx_rate_best()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  BEST FIVE — category leaders (appends into the Leaders tab)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_lead:
+@st.fragment
+def _fx_best_five():
     st.markdown("<div class='pl-hdr'>Best Five — category leaders</div>",
                 unsafe_allow_html=True)
     st.caption("League leaders — the top five players in **every** stat we track, "
                "regardless of team or class. Rate stats require a minimum volume "
-               "so a single lucky make can't top the list.")
+               "so a single lucky make can't top the list. Pick a category to "
+               "see its leaderboards.")
 
-    for group_name, stats in STAT_GROUPS:
-        st.markdown(f"<div class='pl-hdr'>{group_name}</div>",
-                    unsafe_allow_html=True)
-        color = GROUP_COLORS.get(group_name, ACCENT)
-        # three leader-bar charts per row
-        for i in range(0, len(stats), 3):
-            chunk = stats[i:i + 3]
-            cols = st.columns(3)
-            for col, (key, label, fmt, higher, qkey, qmin) in zip(cols, chunk):
-                top = _leaders(rows, key, higher=higher, n=5,
-                               qkey=qkey, qmin=qmin)
-                with col:
-                    st.markdown(f"**{label}**")
-                    if not top:
-                        st.caption("Not enough data.")
-                        continue
-                    st.plotly_chart(
-                        _leader_bar(top, key, fmt, color=color),
-                        width="stretch",
-                        key=f"best_{group_name}_{key}")
+    group_names = [g for g, _ in STAT_GROUPS]
+    group_name = st.pills("Stat group", group_names, default=group_names[0],
+                          key="best_group")
+    if not group_name:                       # pills can be deselected
+        st.caption("Pick a stat group to see its leaders.")
+        return
+    stats = dict(STAT_GROUPS)[group_name]
+    color = GROUP_COLORS.get(group_name, ACCENT)
+    # three leader-bar charts per row
+    for i in range(0, len(stats), 3):
+        chunk = stats[i:i + 3]
+        cols = st.columns(3)
+        for col, (key, label, fmt, higher, qkey, qmin) in zip(cols, chunk):
+            top = _leaders(rows, key, higher=higher, n=5,
+                           qkey=qkey, qmin=qmin)
+            with col:
+                st.markdown(f"**{label}**")
+                if not top:
+                    st.caption("Not enough data.")
+                    continue
+                st.plotly_chart(
+                    _leader_bar(top, key, fmt, color=color),
+                    width="stretch",
+                    key=f"best_{group_name}_{key}")
+
+
+with tab_lead:
+    _fx_best_five()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -852,7 +866,9 @@ def _fx_shot():
                 st.caption("Zone chart (older games). Tap-captured shots show here "
                            "as a precise shot map.")
             else:
-                st.info("No located shots for this player yet.")
+                empty_state("No located shots yet",
+                            "Tap shots in the Game Tracker to build this "
+                            "player's shot map.")
     with ec2:
         st.markdown("**Shot-location profile**")
         rim, mid, thr = PL.get("RimFGA%"), PL.get("MidFGA%"), PL.get("3PR")
@@ -1201,7 +1217,9 @@ def _fx_prof():
             st.caption("≥45% · 30–44% · <30% · bubble size = attempts · "
                        "center 2PT = paint proxy.")
         else:
-            st.info("No located shots for this player yet.")
+            empty_state("No located shots yet",
+                        "Tap shots in the Game Tracker to build this player's "
+                        "shot chart.")
     with sc_r:
         st.markdown("**Hot zones**")
         pz = zsplits.get(pid, {})
@@ -1497,7 +1515,9 @@ def _fx_prof():
                        "half (1st = Q1–2). A 2nd-half FT% drop can flag fatigue or "
                        "pressure.")
     else:
-        st.info("No tracked games for this player yet.")
+        empty_state("No tracked games yet",
+                    "Track a game with this player in the Game Tracker and "
+                    "their game log will show up here.")
 
     # ── League percentiles ────────────────────────────────────────────────────
     st.markdown("<div class='pl-hdr'>League percentiles</div>",
@@ -1763,7 +1783,9 @@ def _fx_plab():
     _TIER_COLOR = {"Gold": "#f0c000", "Silver": "#c0c8d0", "Bronze": "#cd7f32"}
     ltab = _table_full(gender)
     if not ltab:
-        st.info("No tracked-game player data for this league yet.")
+        empty_state("No player data yet",
+                    "No tracked-game player data for this league yet — track a "
+                    "game and the Lab lights up.")
     else:
         lbadges = _lab_badges(gender)
         lclusters = _lab_clusters(gender)
@@ -1971,7 +1993,9 @@ def _fx_plab():
             diff = MX.matchup_difficulty(table=ltab)
             gen_def = {d: v for d, v in mt.items() if d in lnames}
             if not gen_def:
-                st.info("No contested-shot data yet for this league.")
+                empty_state("No contested-shot data yet",
+                            "Tag defenders on shots in the Game Tracker to "
+                            "unlock matchup intelligence for this league.")
             else:
                 st.markdown("<div class='pl-hdr'>Matchup difficulty</div>",
                             unsafe_allow_html=True)

@@ -4,8 +4,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import streamlit as st
-from database.db import query, execute, initialize_database
-from helpers.settings_utils import get_all_settings, apply_page_config
+from database.db import query, execute
+from helpers.ui import page_chrome, page_header
 import helpers.court_geom as CG
 import helpers.game_events as GE
 from PIL import Image
@@ -19,14 +19,9 @@ except Exception:
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 COURT_W = 340   # tap-court image px (pre-transpose width → displayed height)
 
-initialize_database()
-_cfg = get_all_settings()
-apply_page_config(_cfg, "Game Tracker")
+_cfg, ACCENT = page_chrome("Game Tracker")
 
-from helpers.auth import require_login
-require_login()
-
-st.title("Game Tracker")
+page_header("Game Tracker")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  HELPERS

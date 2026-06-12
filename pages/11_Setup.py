@@ -14,16 +14,16 @@ import pandas as pd
 import streamlit as st
 
 from database.db import query, execute
-from helpers.ui import page_chrome, empty_state
+from helpers.ui import page_chrome, page_header, empty_state
 import helpers.manual_box as MB
 
 _cfg, ACCENT = page_chrome("Setup")
 
-st.title("Setup")
-st.caption("Set the extras the Game Tracker doesn't capture — player positions & "
-           "availability, team district, and game type. These power the depth "
-           "chart, standings and game tags. (The Input Hub & Game Tracker are "
-           "untouched.)")
+page_header("Setup",
+            sub="Set the extras the Game Tracker doesn't capture — player positions & "
+                "availability, team district, and game type. These power the depth "
+                "chart, standings and game tags. (The Input Hub & Game Tracker are "
+                "untouched.)")
 
 POSITIONS = ["", "PG", "SG", "SF", "PF", "C"]
 AVAIL = ["Active", "Questionable", "Out", "Injured", "Suspended"]
@@ -69,6 +69,7 @@ with t_roster:
                     execute("UPDATE players SET position=?, availability=? WHERE id=?",
                             (r["position"] or "", r["availability"] or "Active",
                              int(r["id"])))
+                st.cache_data.clear()   # depth chart & co. read these via cached queries
                 st.success("Roster saved.")
             st.caption("Height / wingspan / weight come from the Input Hub (read-only "
                        "here) and now show on the depth chart.")
@@ -94,6 +95,7 @@ with t_teams:
             for _, r in ed.iterrows():
                 execute("UPDATE teams SET district=? WHERE id=?",
                         (r["district"] or "", int(r["id"])))
+            st.cache_data.clear()   # standings group by district via cached queries
             st.success("Districts saved.")
 
 
@@ -121,6 +123,7 @@ with t_games:
             for _, r in ed.iterrows():
                 execute("UPDATE games SET game_type=? WHERE id=?",
                         (r["game_type"] or "Regular", int(r["id"])))
+            st.cache_data.clear()   # game tags feed cached rankings / dashboards
             st.success("Game types saved.")
 
 
@@ -198,6 +201,7 @@ with t_box:
                         _ap = MB.team_totals(box[gsel["team2_id"]])["PTS"]
                         execute("UPDATE games SET home_score=?, away_score=? WHERE id=?",
                                 (_hp, _ap, gsel["id"]))
+                    st.cache_data.clear()   # box feeds records / rankings / four factors
                     st.success(f"{_tnm} box saved.")
 
         if MB.has_manual(gsel["id"]):

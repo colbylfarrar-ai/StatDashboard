@@ -309,10 +309,15 @@ def render_box_score(game_id: int):
     tabs = st.tabs(["Overview", "Flow", "Shooting", "Quarters",
                     "Lineups", "Box Score", "Four Factors"])
 
+    # Each tab body is a @st.fragment so its widgets (team/player pickers,
+    # lineup sliders, …) rerun only that tab instead of rebuilding all seven.
+    # All shared game state above is captured by closure.
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 0 — OVERVIEW
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[0]:
+    @st.fragment
+    def _tab_overview():
         m = st.columns(5)
         m[0].metric("Game Excitement", summ["gei"] if summ else "—",
                     summ["label"] if summ else None, delta_color="off")
@@ -444,10 +449,14 @@ def render_box_score(game_id: int):
                 f"{r['points']}-0 run" for r in _runs[:3])
             st.caption(f"🔥 **Biggest runs:** {_rtxt}")
 
+    with tabs[0]:
+        _tab_overview()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 1 — FLOW
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[1]:
+    @st.fragment
+    def _tab_flow():
         xticks = [_q_base(q) for q in qs] + [end_t]
         xlabels = [_q_label(q) for q in qs] + ["End"]
 
@@ -610,10 +619,14 @@ def render_box_score(game_id: int):
             st.dataframe(df, hide_index=True, width="stretch", column_config=plcfg,
                          key=f"bs{game_id}_plen_{tid}")
 
+    with tabs[1]:
+        _tab_flow()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 2 — SHOOTING
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[2]:
+    @st.fragment
+    def _tab_shooting():
         # 1) stacked creation × region bar (per team) + creation table
         st.markdown("**Shot profile — creation × shot type**")
         st.caption("Each bar = a creation context; stacked Paint-2 / Mid-2 / 3-pt by "
@@ -900,10 +913,14 @@ def render_box_score(game_id: int):
             _style(cfig, 320)
             st.plotly_chart(cfig, width="stretch", key=f"bs{game_id}_contested")
 
+    with tabs[2]:
+        _tab_shooting()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 3 — QUARTERS
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[3]:
+    @st.fragment
+    def _tab_quarters():
         qb = TA.quarter_boxes(t1id, [game_id], events=events)
         qps = TA.quarter_possession_secs(t1id, [game_id], events=events)
         qsq = sorted(qb.keys())
@@ -989,10 +1006,14 @@ def render_box_score(game_id: int):
                 _style(lf, 250)
                 st.plotly_chart(lf, width="stretch", key=f"bs{game_id}_q_paceline")
 
+    with tabs[3]:
+        _tab_quarters()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 4 — LINEUPS
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[4]:
+    @st.fragment
+    def _tab_lineups():
         st.caption("Observed five-man units and on-court splits from THIS game's "
                    "possessions (a possession = one shot or turnover; FTs excluded). "
                    "Single-game samples are small — read directionally.")
@@ -1123,10 +1144,14 @@ def render_box_score(game_id: int):
                        "Minutes from the elapsed clock between events — more "
                        "complete than the possession-seconds estimate.")
 
+    with tabs[4]:
+        _tab_lineups()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 5 — BOX SCORE
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[5]:
+    @st.fragment
+    def _tab_box():
         cols = ["#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%", "FT", "FT%",
                 "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF", "+/-",
                 "SC", "eFG%", "TS%", "GS"]
@@ -1194,10 +1219,14 @@ def render_box_score(game_id: int):
                                file_name=f"box_{game_id}_{nm}.csv", mime="text/csv",
                                key=f"dl_box_{game_id}_{tid}")
 
+    with tabs[5]:
+        _tab_box()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 6 — FOUR FACTORS
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[6]:
+    @st.fragment
+    def _tab_factors():
         tb_ta, ob_ta = TA.team_and_opp_box(t1id, [game_id], events=events)
         ff_h = TA.four_factors(tb_ta, ob_ta)["off"]
         ff_a = TA.four_factors(ob_ta, tb_ta)["off"]
@@ -1235,6 +1264,9 @@ def render_box_score(game_id: int):
         e1, e2 = st.columns(2)
         e1.metric(f"{t1name} factor edges", h_edges)
         e2.metric(f"{t2name} factor edges", a_edges)
+
+    with tabs[6]:
+        _tab_factors()
 
     st.caption("Recomputed from game_events. Box/advanced formulas in helpers/stats.py; "
                "team, shot-quality & lineup engines in helpers/team_analytics.py + "

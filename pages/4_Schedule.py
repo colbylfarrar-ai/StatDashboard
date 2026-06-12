@@ -22,7 +22,7 @@ import streamlit as st
 
 from database.db import query
 from helpers.box_score import render_box_score
-from helpers.ui import page_chrome, score_card, team_color, empty_state
+from helpers.ui import page_chrome, page_header, score_card, team_color, empty_state
 import helpers.team_ratings as TR
 import helpers.stats as S
 
@@ -58,7 +58,28 @@ st.markdown("""
                    font-size:11px; color:#8b949e; }
 .cal-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
 /* shrink the calendar day buttons so the grid reads like a calendar */
-div[data-testid="column"] .stButton > button { min-height:46px; padding:4px 2px; }
+div[data-testid="stColumn"] .stButton > button { min-height:46px; padding:4px 2px; }
+/* Mobile: keep the 7-wide calendar rows on one line instead of stacking into a
+   vertical list. Scoped to the rows after the .cal-grid-marker that have a 7th
+   column, so the day-section's 3/4-column layouts still stack normally. */
+@media (max-width: 640px) {
+  div[data-testid="stElementContainer"]:has(.cal-grid-marker)
+      ~ div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"]:nth-child(7)) {
+    flex-wrap: nowrap !important;
+    gap: 2px !important;
+  }
+  div[data-testid="stElementContainer"]:has(.cal-grid-marker)
+      ~ div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"]:nth-child(7))
+      > div[data-testid="stColumn"] {
+    min-width: 0 !important;
+    flex: 1 1 0 !important;
+  }
+  div[data-testid="stElementContainer"]:has(.cal-grid-marker)
+      ~ div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"]:nth-child(7))
+      .stButton > button {
+    min-width: 0; min-height: 38px; padding: 2px 0; font-size: 11px;
+  }
+}
 .upset-card {
     background:linear-gradient(135deg,#1a0a0a,#2a0d0d);
     border:1px solid #e74c3c; border-radius:12px;
@@ -79,10 +100,10 @@ div[data-testid="column"] .stButton > button { min-height:46px; padding:4px 2px;
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Schedule")
-st.caption("A calendar of every game day. Click a day to see what happened — "
-           "the headline game, the biggest upset, the day's leaders and every "
-           "final with a full box score.")
+page_header("Schedule",
+            sub="A calendar of every game day. Click a day to see what happened — "
+                "the headline game, the biggest upset, the day's leaders and every "
+                "final with a full box score.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -197,6 +218,9 @@ def _load_dot(cnt):
     return "🟢" if cnt <= 2 else "🟠" if cnt <= 5 else "🔴"
 
 
+# marker for the scoped mobile no-wrap CSS above — keep it directly before the grid
+st.markdown('<div class="cal-grid-marker"></div>', unsafe_allow_html=True)
+
 hdr = st.columns(7)
 for i, dow in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]):
     hdr[i].markdown(f"<div class='cal-dow'>{dow}</div>", unsafe_allow_html=True)
@@ -238,52 +262,62 @@ st.markdown("""
 # ══════════════════════════════════════════════════════════════════════════════
 #  SELECTED DAY
 # ══════════════════════════════════════════════════════════════════════════════
-sel = st.session_state["sched_sel"]
-day_games = _games_on(sel)
+@st.fragment
+def _day_section():
+    """Everything below the calendar for the selected day. A fragment, so
+    interactions inside it (load-box-score checkboxes, film expanders) rerun
+    only this section — not the month grid above."""
+    sel = st.session_state["sched_sel"]
+    day_games = _games_on(sel)
 
-st.markdown("---")
-st.markdown(f"### {_fmt_long(sel)}")
+    st.markdown("---")
+    st.markdown(f"### {_fmt_long(sel)}")
 
-if not day_games:
-    empty_state("Nothing on this day",
-                "Pick a highlighted day on the calendar above.", icon="📅")
-    st.stop()
+    if not day_games:
+        empty_state("Nothing on this day",
+                    "Pick a highlighted day on the calendar above.", icon="📅")
+        st.stop()
 
-scored = [g for g in day_games
-          if g["home_score"] is not None and g["away_score"] is not None]
-tracked_games = [g for g in day_games if g["tracked"]]
+    scored = [g for g in day_games
+              if g["home_score"] is not None and g["away_score"] is not None]
+    tracked_games = [g for g in day_games if g["tracked"]]
 
-# ── Day at a Glance ─────────────────────────────────────────────────────────────
-st.markdown("<div class='section-hdr'>Day at a Glance</div>",
-            unsafe_allow_html=True)
+    def _lazy_box(game_id, key):
+        """Render a box score only once asked — keeps a day with many tracked
+        games from computing every full report eagerly inside its expander."""
+        if st.checkbox("Load box score", key=key):
+            render_box_score(game_id)
 
-if scored:
-    pts = [s for g in scored for s in (g["home_score"], g["away_score"])]
-    margins = [abs(g["home_score"] - g["away_score"]) for g in scored]
-    avg_score = float(np.mean(pts))
-    largest_mov = int(max(margins))
-else:
-    avg_score, largest_mov = 0.0, 0
-
-c = st.columns(4)
-c[0].metric("Games", str(len(day_games)))
-c[1].metric("Avg team score", f"{avg_score:.1f}" if scored else "—")
-c[2].metric("Largest margin", str(largest_mov) if scored else "—")
-c[3].metric("Tracked", str(len(tracked_games)))
-
-# ── Scheduled day — games on the calendar, but nothing played yet ──────────────
-if not scored:
-    st.markdown("<div class='section-hdr'>Scheduled — not played yet</div>",
+    # ── Day at a Glance ─────────────────────────────────────────────────────────
+    st.markdown("<div class='section-hdr'>Day at a Glance</div>",
                 unsafe_allow_html=True)
-    for g in day_games:
-        st.markdown(f"- **{g['t2']}** @ **{g['t1']}** · {_fmt_long(g['date'])}")
-    st.stop()
 
-# ── Game of the Day ─────────────────────────────────────────────────────────────
-st.markdown("<div class='section-hdr'>Game of the Day</div>",
-            unsafe_allow_html=True)
+    if scored:
+        pts = [s for g in scored for s in (g["home_score"], g["away_score"])]
+        margins = [abs(g["home_score"] - g["away_score"]) for g in scored]
+        avg_score = float(np.mean(pts))
+        largest_mov = int(max(margins))
+    else:
+        avg_score, largest_mov = 0.0, 0
 
-if scored:
+    c = st.columns(4)
+    c[0].metric("Games", str(len(day_games)))
+    c[1].metric("Avg team score", f"{avg_score:.1f}" if scored else "—")
+    c[2].metric("Largest margin", str(largest_mov) if scored else "—")
+    c[3].metric("Tracked", str(len(tracked_games)))
+
+    # ── Scheduled day — games on the calendar, but nothing played yet ──────────
+    if not scored:
+        st.markdown("<div class='section-hdr'>Scheduled — not played yet</div>",
+                    unsafe_allow_html=True)
+        for g in day_games:
+            st.markdown(f"- **{g['t2']}** @ **{g['t1']}** · {_fmt_long(g['date'])}")
+        st.stop()
+
+    # ── Game of the Day ─────────────────────────────────────────────────────────
+    st.markdown("<div class='section-hdr'>Game of the Day</div>",
+                unsafe_allow_html=True)
+
     gotd = max(scored, key=lambda g: g["home_score"] + g["away_score"])
     hs, as_ = gotd["home_score"], gotd["away_score"]
     h_win = hs >= as_
@@ -319,112 +353,117 @@ if scored:
 
     if gotd["tracked"]:
         with st.expander("Full report — Game of the Day"):
-            render_box_score(gotd["id"])
+            _lazy_box(gotd["id"], f"sched_box_gotd_{gotd['id']}")
     _film_widget(gotd["video_url"])
-else:
-    st.info("No final scores yet for this day.")
 
-# ── Upset Alert ─────────────────────────────────────────────────────────────────
-st.markdown("<div class='section-hdr'>Upset Alert</div>",
-            unsafe_allow_html=True)
-
-rank_of = _rank_of()
-best = None
-for g in scored:
-    if g["home_score"] == g["away_score"]:
-        continue
-    h_win = g["home_score"] > g["away_score"]
-    win_id, lose_id = ((g["team1_id"], g["team2_id"]) if h_win
-                       else (g["team2_id"], g["team1_id"]))
-    win_name, lose_name = ((g["t1"], g["t2"]) if h_win else (g["t2"], g["t1"]))
-    wr, lr = rank_of.get(win_id), rank_of.get(lose_id)
-    if wr is None or lr is None or wr <= lr:
-        continue
-    diff = wr - lr
-    score = (f"{max(g['home_score'], g['away_score'])}–"
-             f"{min(g['home_score'], g['away_score'])}")
-    if best is None or diff > best["diff"]:
-        best = {"win": win_name, "lose": lose_name, "wr": wr, "lr": lr,
-                "diff": diff, "score": score}
-
-if best:
-    st.markdown(f"""
-    <div class="upset-card">
-        <div class="upset-title">Biggest upset of the day</div>
-        <div class="upset-body">
-            <b>#{best['wr']} {best['win']}</b> beat
-            <b>#{best['lr']} {best['lose']}</b> ({best['score']})
-            — a <b>{best['diff']}-spot</b> ranking upset.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.caption("No upsets — higher-ranked teams held serve (or no ranking data "
-               "for the day's matchups).")
-
-# ── Day's Leaders (tracked games only) ──────────────────────────────────────────
-if tracked_games:
-    st.markdown("<div class='section-hdr'>Day's Leaders</div>",
+    # ── Upset Alert ─────────────────────────────────────────────────────────────
+    st.markdown("<div class='section-hdr'>Upset Alert</div>",
                 unsafe_allow_html=True)
 
-    pmeta = _player_meta()
-    best_pts = best_reb = best_ast = None  # (value, player_id)
-    for g in tracked_games:
-        for pid, b in S.aggregate_player_boxes([g["id"]]).items():
-            if best_pts is None or b["PTS"] > best_pts[0]:
-                best_pts = (b["PTS"], pid)
-            if best_reb is None or b["TRB"] > best_reb[0]:
-                best_reb = (b["TRB"], pid)
-            if best_ast is None or b["AST"] > best_ast[0]:
-                best_ast = (b["AST"], pid)
+    rank_of = _rank_of()
+    best = None
+    for g in scored:
+        if g["home_score"] == g["away_score"]:
+            continue
+        h_win = g["home_score"] > g["away_score"]
+        win_id, lose_id = ((g["team1_id"], g["team2_id"]) if h_win
+                           else (g["team2_id"], g["team1_id"]))
+        win_name, lose_name = ((g["t1"], g["t2"]) if h_win else (g["t2"], g["t1"]))
+        wr, lr = rank_of.get(win_id), rank_of.get(lose_id)
+        if wr is None or lr is None or wr <= lr:
+            continue
+        diff = wr - lr
+        score = (f"{max(g['home_score'], g['away_score'])}–"
+                 f"{min(g['home_score'], g['away_score'])}")
+        if best is None or diff > best["diff"]:
+            best = {"win": win_name, "lose": lose_name, "wr": wr, "lr": lr,
+                    "diff": diff, "score": score}
 
-    def _who(pid):
-        name, team = pmeta.get(pid, ("?", ""))
-        return f"{name} ({team})"
-
-    l = st.columns(3)
-    if best_pts and best_pts[0] > 0:
-        l[0].metric("Top scorer", f"{int(best_pts[0])} PTS", _who(best_pts[1]))
+    if best:
+        st.markdown(f"""
+        <div class="upset-card">
+            <div class="upset-title">Biggest upset of the day</div>
+            <div class="upset-body">
+                <b>#{best['wr']} {best['win']}</b> beat
+                <b>#{best['lr']} {best['lose']}</b> ({best['score']})
+                — a <b>{best['diff']}-spot</b> ranking upset.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        l[0].metric("Top scorer", "—")
-    if best_reb and best_reb[0] > 0:
-        l[1].metric("Top rebounder", f"{int(best_reb[0])} REB", _who(best_reb[1]))
-    else:
-        l[1].metric("Top rebounder", "—")
-    if best_ast and best_ast[0] > 0:
-        l[2].metric("Top playmaker", f"{int(best_ast[0])} AST", _who(best_ast[1]))
-    else:
-        l[2].metric("Top playmaker", "—")
+        st.caption("No upsets — higher-ranked teams held serve (or no ranking data "
+                   "for the day's matchups).")
 
-# ── All Results ─────────────────────────────────────────────────────────────────
-st.markdown("<div class='section-hdr'>All Results</div>", unsafe_allow_html=True)
+    # ── Day's Leaders (tracked games only) ──────────────────────────────────────
+    if tracked_games:
+        st.markdown("<div class='section-hdr'>Day's Leaders</div>",
+                    unsafe_allow_html=True)
 
-for g in day_games:
-    hs, as_ = g["home_score"], g["away_score"]
-    has_score = hs is not None and as_ is not None
-    t1_win = has_score and hs > as_
-    t2_win = has_score and as_ > hs
+        pmeta = _player_meta()
+        best_pts = best_reb = best_ast = None  # (value, player_id)
+        for g in tracked_games:
+            for pid, b in S.aggregate_player_boxes([g["id"]]).items():
+                if best_pts is None or b["PTS"] > best_pts[0]:
+                    best_pts = (b["PTS"], pid)
+                if best_reb is None or b["TRB"] > best_reb[0]:
+                    best_reb = (b["TRB"], pid)
+                if best_ast is None or b["AST"] > best_ast[0]:
+                    best_ast = (b["AST"], pid)
 
-    if has_score:
-        t1_cls = "score-winner" if t1_win else "score-loser"
-        t2_cls = "score-winner" if t2_win else "score-loser"
-        hs_s, as_s = str(int(hs)), str(int(as_))
-        meta = (f"Margin {abs(int(hs) - int(as_))}" if hs != as_ else "Tie")
-    else:
-        t1_cls = t2_cls = "score-loser"
-        hs_s = as_s = "—"
-        meta = "No score yet"
+        def _who(pid):
+            name, team = pmeta.get(pid, ("?", ""))
+            return f"{name} ({team})"
 
-    tracked_badge = ("<span class='tracked-badge'>tracked</span>"
-                     if g["tracked"] else "")
+        l = st.columns(3)
+        if best_pts and best_pts[0] > 0:
+            l[0].metric("Top scorer", f"{int(best_pts[0])} PTS", _who(best_pts[1]))
+        else:
+            l[0].metric("Top scorer", "—")
+        if best_reb and best_reb[0] > 0:
+            l[1].metric("Top rebounder", f"{int(best_reb[0])} REB", _who(best_reb[1]))
+        else:
+            l[1].metric("Top rebounder", "—")
+        if best_ast and best_ast[0] > 0:
+            l[2].metric("Top playmaker", f"{int(best_ast[0])} AST", _who(best_ast[1]))
+        else:
+            l[2].metric("Top playmaker", "—")
 
-    st.markdown(score_card(
-        [(g['t2'], as_s, t2_win), (g['t1'], hs_s, t1_win)],
-        footer=f"{meta}{tracked_badge}", style_names=True),
-        unsafe_allow_html=True)
+    # ── All Results ─────────────────────────────────────────────────────────────
+    st.markdown("<div class='section-hdr'>All Results</div>", unsafe_allow_html=True)
 
-    if g["tracked"]:
-        with st.expander(f"Box score — {g['t2']} @ {g['t1']}"):
-            render_box_score(g["id"])
+    for g in day_games:
+        if g["id"] == gotd["id"]:
+            st.caption(f"{g['t2']} @ {g['t1']} — Game of the Day, shown above.")
+            continue
 
-    _film_widget(g["video_url"])
+        hs, as_ = g["home_score"], g["away_score"]
+        has_score = hs is not None and as_ is not None
+        t1_win = has_score and hs > as_
+        t2_win = has_score and as_ > hs
+
+        if has_score:
+            t1_cls = "score-winner" if t1_win else "score-loser"
+            t2_cls = "score-winner" if t2_win else "score-loser"
+            hs_s, as_s = str(int(hs)), str(int(as_))
+            meta = (f"Margin {abs(int(hs) - int(as_))}" if hs != as_ else "Tie")
+        else:
+            t1_cls = t2_cls = "score-loser"
+            hs_s = as_s = "—"
+            meta = "No score yet"
+
+        tracked_badge = ("<span class='tracked-badge'>tracked</span>"
+                         if g["tracked"] else "")
+
+        st.markdown(score_card(
+            [(g['t2'], as_s, t2_win), (g['t1'], hs_s, t1_win)],
+            footer=f"{meta}{tracked_badge}", style_names=True),
+            unsafe_allow_html=True)
+
+        if g["tracked"]:
+            with st.expander(f"Box score — {g['t2']} @ {g['t1']}"):
+                _lazy_box(g["id"], f"sched_box_{g['id']}")
+
+        _film_widget(g["video_url"])
+
+
+_day_section()

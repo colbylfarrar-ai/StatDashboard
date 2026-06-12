@@ -31,7 +31,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from helpers.ui import (page_chrome, style_fig as _style, AWAY, CARD_BG, GRID,
-                        rgb as _rgb, grid as _grid)
+                        rgb as _rgb, grid as _grid, page_header, gender_radio,
+                        gender_label, empty_state, HEAT)
 from helpers.cards import team_short as _team_short, fmt as _fmt, bar_h
 from helpers.glossary import glossary_tab
 import helpers.officials as OFF
@@ -92,10 +93,6 @@ def _glass(col, label, value, sub="", color=None):
         f"<div class='glass-sub'>{sub}</div></div>", unsafe_allow_html=True)
 
 
-def _chip(label, value):
-    return f"<span class='stat-chip'>{label} <b>{value}</b></span>"
-
-
 def _quadrant(rows, xk, yk, xlab, ylab, xfmt, yfmt, color="#bc8cff", qmin=1):
     """KenPom-style whistle-archetype quadrant with league-avg crosshairs."""
     pool = [r for r in rows if r.get(xk) is not None and r.get(yk) is not None
@@ -137,18 +134,18 @@ def _official_game_log(off_pk, g):
 
 
 hc1, hc2 = st.columns([3, 1])
-with hc2:
-    gender_lbl = st.radio("League", ["All", "Girls", "Boys"],
-                          horizontal=True, key="off_league")
-gender = {"All": None, "Girls": "F", "Boys": "M"}[gender_lbl]
+gender = gender_radio(hc2, default=None, key="off_league", include_all=True)
+gender_lbl = "All" if gender is None else gender_label(gender)
 
 data = _official_overview(gender)
 rows = data["officials"]
 team_names = data["teams"]
 
 if not rows:
-    st.info("No officials have worked a tracked game for this league yet. Assign "
-            "officials in the Game Tracker and call some fouls — they'll show up here.")
+    empty_state("No officials yet for this league",
+                "Assign officials in the Game Tracker and call some fouls — "
+                "they'll show up here.",
+                cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     st.stop()
 
 # Derived per-ref stats: pace-adjusted whistle rate + lean/clutch shares
@@ -167,21 +164,15 @@ def _avg(key, qmin=1):
 
 
 with hc1:
-    st.markdown(
-        f"""
-    <div class="lab-hero">
-      <div class="lab-hero-name">Officiating Lab</div>
-      <div class="lab-hero-sub">{gender_lbl} league · who blows the whistle, how
-      tight, and the scoring environment of the games they work.</div>
-      <div class="lab-hero-chips">
-        {_chip('Officials', len(rows))}
-        {_chip('Assigned fouls', total_fouls)}
-        {_chip('Avg FPG', f"{_avg('FPG'):.1f}")}
-        {_chip('Avg FP100', f"{_avg('FP100'):.1f}")}
-        {_chip('Avg PPP', f"{_avg('PPP'):.3f}")}
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    page_header(
+        "Officiating Lab",
+        sub=f"{gender_lbl} league · who blows the whistle, how tight, and the "
+            "scoring environment of the games they work.",
+        chips=[f"Officials {len(rows)}",
+               f"Assigned fouls {total_fouls}",
+               f"Avg FPG {_avg('FPG'):.1f}",
+               f"Avg FP100 {_avg('FP100'):.1f}",
+               f"Avg PPP {_avg('PPP'):.3f}"])
 
 # ── Signature whistle leaders (glass tiles) ─────────────────────────────────────
 _elig = [r for r in rows if r["games"] >= 2] or rows
@@ -423,7 +414,7 @@ with tab_charts:
             z=z,
             x=[_team_short(team_names.get(t, "?")) for t in top_teams],
             y=[r["name"] for r in grid_offs],
-            colorscale="YlOrRd", showscale=True,
+            colorscale=HEAT, showscale=True,
             hovertemplate="%{y} → %{x}: %{z} fouls<extra></extra>",
             text=z, texttemplate="%{text}", textfont=dict(size=10)))
         _style(hm, height=max(320, 40 + 30 * len(grid_offs)),
@@ -473,7 +464,7 @@ with tab_charts:
              for r in timing]
         tm = go.Figure(go.Heatmap(
             z=z, x=["Q1", "Q2", "Q3", "Q4"], y=[r["name"] for r in timing],
-            colorscale="Blues", showscale=True, zmin=0,
+            colorscale=HEAT, showscale=True, zmin=0,
             hovertemplate="%{y} — %{x}: %{z}% of calls<extra></extra>",
             text=[[f"{v:.0f}%" for v in row] for row in z],
             texttemplate="%{text}", textfont=dict(size=10)))
@@ -487,7 +478,8 @@ with tab_charts:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 3 — INDIVIDUAL
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_ind:
+@st.fragment
+def _fx_individual():
     by_name = {r["name"]: r for r in rows}
     pick = st.selectbox("Official", list(by_name.keys()), key="ind_pick")
     r = by_name[pick]
@@ -601,6 +593,10 @@ with tab_ind:
                      height=min(520, 60 + 35 * len(log_df)))
     else:
         st.info("No game log available.")
+
+
+with tab_ind:
+    _fx_individual()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

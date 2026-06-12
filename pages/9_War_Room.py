@@ -25,7 +25,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from helpers.ui import (page_chrome, style_fig as _style, empty_state, team_color,
-                        chart as _chart, AWAY, GOOD, BAD, gender_radio, gender_label)
+                        chart as _chart, AWAY, GOOD, BAD, HEAT, gender_radio,
+                        gender_label)
 from helpers.cards import bar_h, team_short, style_df as _style_df
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
@@ -67,17 +68,17 @@ def _tracked(g):
     return TR.tracked_ratings(gender=g)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Simulating matchup…")
 def _sim_game(g, a, b, home, n):
     return SIM.simulate_game(_scored(g), a, b, home=home, n=n)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Simulating season…")
 def _sim_season(g, n):
     return SIM.simulate_season(_scored(g), SIM.schedule_from_results(g), n=n)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Simulating bracket…")
 def _sim_bracket(g, field, n):
     return SIM.simulate_tournament(_scored(g), list(field), n=n)
 
@@ -145,6 +146,15 @@ def _wl_ctx(g):
     return TA.lineup_engine_context(g)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _lineup_net(g, team_id, lineup):
+    """NetRtg for one candidate five, cached on (gender, team, lineup tuple) —
+    the bench-swap search tries ~50 lineups and must not recompute each rerun."""
+    tbl = _wl_table(g)
+    rows = [dict(r, _pid=pid) for pid, r in tbl.items() if r["team_id"] == team_id]
+    return TA.lineup_prediction(rows, list(lineup), _wl_ctx(g), team_id)["NetRtg"]
+
+
 tab_match, tab_season, tab_bracket, tab_lineup, tab_gloss = st.tabs(
     ["Matchup", "Season sim", "Bracket", "Lineup", "Glossary"])
 
@@ -152,7 +162,8 @@ tab_match, tab_season, tab_bracket, tab_lineup, tab_gloss = st.tabs(
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 1 — MATCHUP
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_match:
+@st.fragment
+def _render_matchup():
     st.subheader("Matchup predictor")
     st.caption(
         f"Projected score, win probability, a line-by-line margin breakdown, and "
@@ -169,13 +180,17 @@ with tab_match:
                         key="wr_home")
 
     if ta == tb:
-        st.info("Pick two different teams.")
+        empty_state("Pick two different teams",
+                    "Team A and Team B are the same — choose an opponent to "
+                    "project the matchup.")
     else:
         home_arg = ta if homep == name_of[ta] else (tb if homep == name_of[tb] else None)
         pred = PRED.predict_game(ta, tb, scored=scored, tracked=tracked,
                                  gender=gender, home=home_arg)
         if not pred:
-            st.info("One of these teams is unrated.")
+            empty_state("One of these teams is unrated",
+                        "Both teams need a rating — enter game results for them "
+                        "in the Input Hub first.")
         else:
             wa, wb = pred["win_prob_a"] * 100, pred["win_prob_b"] * 100
             ca, cb = _team_pair_colors(ta, tb)
@@ -251,10 +266,15 @@ with tab_match:
                 tcl[3].metric("ORtg A / B", f"{tk['ortg_a']:.0f} / {tk['ortg_b']:.0f}")
 
 
+with tab_match:
+    _render_matchup()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 2 — SEASON SIM
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_season:
+@st.fragment
+def _render_season():
     st.subheader("Season simulation")
     st.caption(
         f"Replays every finished game {n:,} times from the ratings to get each "
@@ -330,10 +350,15 @@ with tab_season:
             st.plotly_chart(fig, width="stretch", key="wr_seas_dist")
 
 
+with tab_season:
+    _render_season()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 3 — BRACKET
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_bracket:
+@st.fragment
+def _render_bracket():
     st.subheader("Bracket / tournament odds")
     st.caption(
         f"Seed a single-elimination field by rating and roll the bracket {n:,} "
@@ -347,7 +372,13 @@ with tab_bracket:
     if len(field) < 2:
         empty_state("Pick at least two teams",
                     "Choose a tournament field above to simulate championship odds.")
+    elif (not st.session_state.get("wr_brk_ran")
+          and not st.button(f"Run bracket — roll the field {n:,} times",
+                            key="wr_brk_go", type="primary")):
+        st.caption("The bracket is the heaviest simulation on the page, so it "
+                   "waits for the button. Results stay loaded once run.")
     else:
+        st.session_state["wr_brk_ran"] = True
         res = _sim_bracket(gender, tuple(field), n)
         if not res:
             empty_state("Not enough rated teams in the field",
@@ -369,7 +400,7 @@ with tab_bracket:
                      for d in res]
                 yt = [f"{d['seed']}. {team_short(d['name'])}" for d in res]
                 hm = go.Figure(go.Heatmap(
-                    z=z, x=labels, y=yt, colorscale="Turbo", zmin=0, zmax=100,
+                    z=z, x=labels, y=yt, colorscale=HEAT, zmin=0, zmax=100,
                     colorbar=dict(title="%", thickness=12),
                     hovertemplate="%{y}<br>%{x}: %{z:.1f}%<extra></extra>"))
                 hm.update_yaxes(autorange="reversed")
@@ -387,6 +418,10 @@ with tab_bracket:
                 column_config={
                     "Champ %": st.column_config.ProgressColumn(
                         "Champ %", format="%.1f%%", min_value=0, max_value=100)})
+
+
+with tab_bracket:
+    _render_bracket()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -461,7 +496,7 @@ with tab_lineup:
                         marker=dict(
                             size=[max(12, c["usg_share"] * 90) for c in _cb],
                             color=[c["off_pts100"] for c in _cb],
-                            colorscale="Viridis", showscale=False,
+                            colorscale=HEAT, showscale=False,
                             line=dict(width=1, color="#30363d")),
                         hovertext=[c["name"] for c in _cb],
                         hovertemplate="%{hovertext}<br>Off/100 %{x:.1f} · "
@@ -478,7 +513,7 @@ with tab_lineup:
                     for _out in _chosen:
                         for _bp in _bench:
                             _nw = [_bp["_pid"] if x == _out else x for x in _chosen]
-                            _nn = TA.lineup_prediction(_rows, _nw, _ctxd, _t)["NetRtg"]
+                            _nn = _lineup_net(gender, _t, tuple(_nw))
                             if _nn is not None:
                                 _swaps.append((_nn - _base, _out, _bp))
                     _ups = sorted([sw for sw in _swaps if sw[0] > 0.05],

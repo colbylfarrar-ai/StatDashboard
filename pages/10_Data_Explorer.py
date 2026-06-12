@@ -18,8 +18,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from helpers.ui import (page_chrome, gender_radio, style_fig as _style,
-                        empty_state, grid as _grid, chart as _chart)
+from helpers.ui import (page_chrome, page_header, gender_radio, style_fig as _style,
+                        empty_state, grid as _grid, chart as _chart, DIVERGE)
 import helpers.player_ratings as PR
 import helpers.archetypes as AR
 import helpers.stats as S
@@ -27,10 +27,10 @@ import helpers.court as court
 
 _cfg, ACCENT = page_chrome("Data Explorer")
 
-st.title("Data Explorer")
-st.caption("Every stat, your way — filter the full table, build any scatter, map "
-           "the league's playing styles, and correlate anything. Raw and dense by "
-           "design; trust your own read on what matters.")
+page_header("Data Explorer",
+            sub="Every stat, your way — filter the full table, build any scatter, "
+                "map the league's playing styles, and correlate anything. Raw and "
+                "dense by design; trust your own read on what matters.")
 
 # ── cached engine wrappers (compute once per gender/min-games, reuse on rerun) ──
 @st.cache_data(ttl=600, show_spinner=False)
@@ -148,7 +148,10 @@ with t_map:
     sm = _stylemap(gender, min_g)
     pts = sm.get("points", {})
     if not pts:
-        st.info("Style map needs scikit-learn and at least 3 players.")
+        empty_state("Style map unavailable",
+                    "Needs scikit-learn installed and at least 3 players in the "
+                    "pool — lower the minimum games or track more games.",
+                    icon="🗺")
     else:
         mdf = pd.DataFrame(list(pts.values()))
         mdf["overall"] = mdf["overall"].fillna(50)
@@ -175,15 +178,17 @@ with t_corr:
     pick = st.multiselect("Stats to correlate", num_cols, default=default_stats,
                           key="dx_corrpick")
     if len(pick) < 2:
-        st.info("Pick at least two stats.")
+        empty_state("Pick at least two stats",
+                    "Choose two or more stats above to build the correlation "
+                    "matrix.", icon="▦")
     else:
         corr = df[pick].corr()
-        fig = px.imshow(corr, text_auto=".2f", color_continuous_scale="RdBu_r",
+        fig = px.imshow(corr, text_auto=".2f", color_continuous_scale=DIVERGE,
                         zmin=-1, zmax=1, aspect="auto")
         _style(fig, max(360, 34 * len(pick)))
         _chart(fig, data=corr.reset_index(), key="dx_corr")
-        st.caption("Pearson correlation across the player pool. Deep red = strong "
-                   "positive, deep blue = strong negative. Use it to spot which "
+        st.caption("Pearson correlation across the player pool. Deep green = strong "
+                   "positive, deep red = strong negative. Use it to spot which "
                    "stats move together (and which are redundant).")
 
 # ── tab 5: shot maps (hexbin / expected points / scatter) ─────────────────────

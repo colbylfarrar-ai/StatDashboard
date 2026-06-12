@@ -11,6 +11,7 @@ shared/scouting database grows, so a mis-click is recoverable, not permanent.
 
 Display + controls only; all mutation/validation lives in helpers/event_log.py.
 """
+import re
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -18,16 +19,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import streamlit as st
 
-from helpers.ui import page_chrome, empty_state
+from helpers.ui import page_chrome, page_header, empty_state
 import helpers.event_log as EL
 
 _cfg, ACCENT = page_chrome("Event Editor")
 
-st.title("Event Editor")
-st.caption("Correct or delete any logged play-by-play event. Edits re-derive +/- "
-           "for changed baskets and keep lineup stats valid; deletes cascade their "
-           "on-court snapshot. Adding brand-new events is still done in the Game "
-           "Tracker (a new event needs its on-floor lineup).")
+# Clock times must be M:SS / MM:SS with seconds 00–59 (e.g. "8:04", "10:32").
+_TIME_RE = re.compile(r"^\d{1,2}:[0-5]\d$")
+
+page_header("Event Editor",
+            sub="Correct or delete any logged play-by-play event. Edits re-derive +/- "
+                "for changed baskets and keep lineup stats valid; deletes cascade their "
+                "on-court snapshot. Adding brand-new events is still done in the Game "
+                "Tracker (a new event needs its on-floor lineup).")
 
 games = EL.games_with_events()
 if not games:
@@ -151,6 +155,7 @@ edited = st.data_editor(
 
 if st.button("💾 Save changes", type="primary", key="ee_save"):
     updated = deleted = 0
+    bad_times = []
     for _, r in edited.iterrows():
         eid = int(r["id"])
         ev = orig_by_id.get(eid)
@@ -177,12 +182,21 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
             "official_id": name2oid.get(r["Official"]),
         }
         if EL.event_changed(ev, vals):
+            # Clock sanity — "12:99" would poison elapsed-time / +/- math.
+            if not _TIME_RE.match(str(r["Time"]).strip()):
+                bad_times.append(f"Q{r['Q']} '{r['Time']}' ({r['Type']} · {r['Primary']})")
+                continue
             EL.update_event(gid, eid, vals, pid2team)
             updated += 1
+    if bad_times:
+        st.error("Skipped row(s) with an invalid clock time — use M:SS with "
+                 "seconds 00–59 (e.g. 8:04): " + "; ".join(bad_times)
+                 + ". Fix those rows and save again.")
     if updated or deleted:
         st.cache_data.clear()
         st.success(f"Saved — {updated} edited, {deleted} deleted. "
                    "Recompute the final score above if it drifted.")
-        st.rerun()
-    else:
+        if not bad_times:   # no rerun — keep the skipped-row error visible
+            st.rerun()
+    elif not bad_times:
         st.info("No changes to save.")

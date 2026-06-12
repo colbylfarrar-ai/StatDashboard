@@ -38,9 +38,10 @@ import streamlit.components.v1 as components
 from database.db import query, execute
 from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
-from helpers.ui import (page_chrome, rgb as _rgb, style_fig as _style,
-                        q_label as _q_label, empty_state, gender_radio,
-                        gender_label, grid as _grid, AWAY, CARD_BG, GRID)
+from helpers.ui import (page_chrome, page_header, rgb as _rgb,
+                        style_fig as _style, q_label as _q_label, empty_state,
+                        gender_radio, gender_label, grid as _grid,
+                        AWAY, CARD_BG, GRID, HEAT, DIVERGE)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
@@ -368,7 +369,7 @@ def _poss_sankey(po, accent, height=360):
 #  HEADER + TEAM SELECT
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.title("Team Dashboard")
+page_header("Team Dashboard")
 
 # Default team comes from Settings. Look up its league so the gender radio
 # opens on the right side — otherwise a Boys default is filtered out of the
@@ -578,7 +579,7 @@ def _gender_tracked_ids(g):
     return [r["id"] for r in rows]
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Computing RAPM…")
 def _rapm(g):
     """League-wide two-way RAPM over the gender's tracked games (holds teammates
     AND opponents constant — needs the whole pool, not one team). inference=True
@@ -695,7 +696,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Computing league shot tables…")
 def _pp_zone_tables():
     """Per-player zone splits + guarded/open splits over the whole tracked sample."""
     ev = S.fetch_events()
@@ -744,9 +745,11 @@ def _matchup_grid(g, tid, _ids):
 #    _fx_players → tab_players   Players (nested 2PT/3PT sub-tabs inside)
 #    _fx_sched   → tab_sched     Schedule + box-score picker
 #    with tab_charts:  creates 10 sub-tabs (ch_sc sh rb df tr qt adv bld play
-#       impact). Scoring/Shooting/Rebounding/Defense/Trends + Play Types render
-#       INSIDE this block — they SHARE one computed-once data batch (quarter, qs,
-#       cbg, poss, tb, ob…), which is why they are NOT individually fragmented.
+#       impact). Scoring/Shooting/Rebounding/Defense/Trends render INSIDE this
+#       block — they SHARE one computed-once data batch (quarter, qs, cbg, poss,
+#       tb, ob…) and hold no widgets, which is why they are NOT fragmented.
+#       Play Types (_fx_chplay) and Impact Lab (_fx_chimpact) ARE fragments —
+#       each owns a radio, so flipping it reruns only that sub-tab.
 #    _fx_chqt/_fx_chadv/_fx_chbld → ch_qt/ch_adv/ch_bld  (Quarters/Advanced/Build,
 #       rendered BELOW at module level — the sub-tab objects are module globals)
 #    _fx_scout   → tab_scout     Scout (rendered between Advanced and Build)
@@ -1302,7 +1305,7 @@ def _fx_players():
                     textposition="top center", textfont=dict(size=9),
                     marker=dict(size=[max(8, (p["PPG"] or 0) * 1.3) for p in mp],
                                 color=[p["OVERALL"] or 50 for p in mp],
-                                colorscale="Viridis", showscale=True,
+                                colorscale=HEAT, showscale=True,
                                 colorbar=dict(title="OVR"),
                                 line=dict(width=1, color="#30363d")),
                     hovertext=[p["name"] for p in mp],
@@ -1415,7 +1418,7 @@ def _fx_players():
                     marker=dict(
                         size=[max(9, (p["PPG"] or 0) * 1.4) for p in _sel],
                         color=[p["PPG"] or 0 for p in _sel],
-                        colorscale="Greens", showscale=True,
+                        colorscale=HEAT, showscale=True,
                         colorbar=dict(title="PPG"),
                         line=dict(width=1, color="#30363d")),
                     hovertext=[p["name"] for p in _sel],
@@ -1456,7 +1459,7 @@ def _fx_players():
                 textposition="top center", textfont=dict(size=9),
                 marker=dict(size=[max(9, (p["PPG"] or 0) * 1.4) for p in ve],
                             color=[p["OVERALL"] or 50 for p in ve],
-                            colorscale="Viridis", showscale=True,
+                            colorscale=HEAT, showscale=True,
                             colorbar=dict(title="OVR"),
                             line=dict(width=1, color="#30363d")),
                 hovertext=[p["name"] for p in ve],
@@ -1490,14 +1493,14 @@ def _fx_players():
                     x=[ZPOS[z][0] for z in qz], y=[ZPOS[z][1] for z in qz],
                     mode="markers+text",
                     marker=dict(size=66, color=[pzl[z]["pct"] * 100 for z in qz],
-                                colorscale="RdYlGn", cmin=25, cmax=65,
+                                colorscale=DIVERGE, cmin=25, cmax=65,
                                 showscale=True, colorbar=dict(title="FG%"),
                                 line=dict(color="#0d1117", width=2)),
                     text=[f"#{pzl[z]['number']} "
                           f"{pzl[z]['name'].split()[-1]}<br>"
                           f"{pzl[z]['pct']*100:.0f}% "
                           f"({pzl[z]['FGM']}/{pzl[z]['FGA']})" for z in qz],
-                    textfont=dict(size=10, color="#0d1117"),
+                    textfont=dict(size=10, color="#f0f6fc"),
                     textposition="middle center",
                     hovertext=[f"{TA.ZONE_LABELS[z]}<br>#{pzl[z]['number']} "
                                f"{pzl[z]['name']}<br>{pzl[z]['FGM']}/"
@@ -1533,10 +1536,14 @@ def _fx_players():
         st.caption("Every player stat the app tracks, as a roster leaderboard — "
                    "players ranked against each other on that stat. Expand a "
                    "category to see all its stats.")
-        for gi, (cat_name, spec) in enumerate(PLAYER_LEADER_GROUPS):
-            with st.expander(cat_name,
-                             expanded=(cat_name == "Scoring & shooting")):
-                _player_leaderboards(players, spec, key_prefix=f"pllb{gi}")
+        _n_lb = sum(len(spec) for _, spec in PLAYER_LEADER_GROUPS)
+        # heavy wall (~59 charts) — render on demand only (page-load perf)
+        if st.checkbox(f"Load all stat leaderboards ({_n_lb} charts)",
+                       value=False, key="pl_lb_load"):
+            for gi, (cat_name, spec) in enumerate(PLAYER_LEADER_GROUPS):
+                with st.expander(cat_name,
+                                 expanded=(cat_name == "Scoring & shooting")):
+                    _player_leaderboards(players, spec, key_prefix=f"pllb{gi}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1641,7 +1648,10 @@ with tab_charts:
          "Quarters", "Advanced", "Build", "Play Types", "Impact Lab"])
 
     # ───────────────────────────────────────────── PLAY TYPES ──────────────
-    with ch_play:
+    # fragment: the Offense/Defense radio lives INSIDE, so flipping it reruns
+    # only this sub-tab, not the whole page.
+    @st.fragment
+    def _fx_chplay():
         st.subheader("Play types — possession efficiency vs the league")
         st.caption(
             "Points per possession by **how each shot was generated**, with a "
@@ -1708,6 +1718,9 @@ with tab_charts:
                 st.caption("Not enough possessions in any single play type yet to "
                            "rank against the league — check back after more "
                            "tracked games.")
+
+    with ch_play:
+        _fx_chplay()
 
     if not has_tracked:
         for _ch in (ch_sc, ch_sh, ch_rb, ch_df, ch_tr):
@@ -1971,13 +1984,13 @@ with tab_charts:
                         size=[20 + (zmap[z]["FGA"] / maxfga) * 60
                               for z in TA.ZONES],
                         color=[zmap[z]["FG%"] * 100 for z in TA.ZONES],
-                        colorscale="RdYlGn", cmin=20, cmax=65, showscale=True,
+                        colorscale=DIVERGE, cmin=20, cmax=65, showscale=True,
                         colorbar=dict(title="FG%"),
                         line=dict(color="#0d1117", width=2)),
                     text=[f"{lbl[z]}<br>{zmap[z]['FG%']*100:.0f}%"
                           if zmap[z]["FGA"] else f"{lbl[z]}<br>—"
                           for z in TA.ZONES],
-                    textfont=dict(size=10, color="#0d1117"),
+                    textfont=dict(size=10, color="#f0f6fc"),
                     textposition="middle center",
                     hovertext=[f"{TA.ZONE_LABELS[z]}<br>{zmap[z]['FGM']}/"
                                f"{zmap[z]['FGA']}" for z in TA.ZONES],
@@ -3412,8 +3425,10 @@ def _fx_chqt():
             ("Opp TS%", lambda d: S.ts(d["opp"]) * 100, "pct"),
             ("Forced TOV%", lambda d: d["four_factors"]["def"]["TOV"] * 100, "pct"),
         ]
-        with st.expander("Show every stat by quarter (full grid)",
-                         expanded=False):
+        # heavy wall (37 charts) — a collapsed expander still renders its body,
+        # so gate it behind a real checkbox (page-load perf)
+        if st.checkbox(f"Load every stat by quarter ({len(QSPEC)} charts)",
+                       value=False, key="qgrid_load"):
             st.caption("Every team stat the app tracks, each as its own per-quarter "
                        "bar (pooled / averaged over tracked games).")
             qcols = st.columns(2)
@@ -3758,12 +3773,12 @@ def _fx_chadv():
                         size=[20 + 34 * (an["made_fg"].get(i, 0) / mx)
                               for i in node_ids],
                         color=[an["assists"].get(i, 0) for i in node_ids],
-                        colorscale="Plasma", showscale=True,
+                        colorscale=HEAT, showscale=True,
                         colorbar=dict(title="Assists"),
                         line=dict(width=2, color="#0d1117")),
                     text=[name_by[i] for i in node_ids],
                     textposition="middle center",
-                    textfont=dict(size=10, color="#0d1117"),
+                    textfont=dict(size=10, color="#f0f6fc"),
                     hovertext=[f"{full_by.get(i,'?')}<br>"
                                f"{an['made_fg'].get(i,0)} made FG · "
                                f"{an['assists'].get(i,0)} ast given · "
@@ -3850,7 +3865,7 @@ def _fx_chadv():
                         orientation="h",
                         marker=dict(color=[p["PTS"] / tot_pts * 100
                                            for p in reversed(top8)],
-                                    colorscale="Tealgrn", showscale=False),
+                                    colorscale=HEAT, showscale=False),
                         text=[f"{p['PTS'] / tot_pts * 100:.0f}%"
                               for p in reversed(top8)], textposition="auto"))
                     bal.update_xaxes(title="Share of team points %")
@@ -4312,7 +4327,10 @@ def _fx_scout():
 if True:
     h_impact = ch_impact
 
-    with h_impact:
+    # fragment: the WPA model radio lives INSIDE, so switching models reruns
+    # only the Impact Lab, not the whole page.
+    @st.fragment
+    def _fx_chimpact():
         if not has_tracked:
             st.info("Tracked games needed for the impact lab (RAPM, WPA, chemistry "
                     "and lineups all run on possession data).")
@@ -4474,12 +4492,12 @@ if True:
                                       / max(nodes[n]["poss"] for n in node_ids))
                                       for i in node_ids],
                                 color=[nodes[i]["net"] for i in node_ids],
-                                colorscale="RdYlGn", cmid=0, showscale=True,
+                                colorscale=DIVERGE, cmid=0, showscale=True,
                                 colorbar=dict(title="Solo net"),
                                 line=dict(width=2, color="#0d1117")),
                             text=[name_by.get(i, "?").split()[0] for i in node_ids],
                             textposition="middle center",
-                            textfont=dict(size=9, color="#0d1117"),
+                            textfont=dict(size=9, color="#f0f6fc"),
                             hovertext=[f"{name_by.get(i,'?')}<br>"
                                        f"net {nodes[i]['net']:+.1f} · "
                                        f"{nodes[i]['poss']} poss" for i in node_ids],
@@ -4522,6 +4540,9 @@ if True:
                     height=min(460, 60 + 32 * len(units)))
             else:
                 st.caption("No 5-man unit cleared the minimum possessions yet.")
+
+    with h_impact:
+        _fx_chimpact()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4735,7 +4756,7 @@ def _fx_chbld():
                     marker["size"] = 13
                 if color_by != "(none)":
                     marker.update(color=d[color_by].tolist(),
-                                  colorscale="Viridis", showscale=True,
+                                  colorscale=HEAT, showscale=True,
                                   colorbar=dict(title=color_by))
                 else:
                     marker["color"] = ACCENT
@@ -5426,46 +5447,48 @@ def _render_profile(P, pid, rows, zsplits, zguard):
     OVR = P["OVERALL"] or 0
 
     if OVR >= 65 and DEF >= 60:
-        arch = ("", "Two-Way Force",
+        arch = ("Two-Way Force",
                 "Produces on offense and disrupts on defense — a rare both-ends impact.")
     elif OFF >= 62 and pc("PPG") >= 80:
-        arch = ("", "Scoring Machine",
+        arch = ("Scoring Machine",
                 "A primary offensive weapon who creates and converts at volume.")
     elif PLY >= 62 and pc("APG") >= 80:
-        arch = ("", "Floor General",
+        arch = ("Floor General",
                 "Runs the offense through vision and distribution.")
     elif REB_R >= 62 or pc("REB") >= 85:
-        arch = ("", "Glass Cleaner",
+        arch = ("Glass Cleaner",
                 "Owns the boards and generates extra possessions.")
     elif DEF >= 62 or pc("STOCKS") >= 85:
-        arch = ("", "Defensive Anchor",
+        arch = ("Defensive Anchor",
                 "Disrupts opponents with steals, blocks, and contests.")
     elif pc("3P%") >= 70 and P["3PA"] >= 15 and pc("DSHOT%", True) >= 55:
-        arch = ("", "3-and-D Wing",
+        arch = ("3-and-D Wing",
                 "Spaces the floor and holds up defensively — a valuable role.")
     elif pc("3P%") >= 70 and P["3PA"] >= 20:
-        arch = ("", "Spot-Up Shooter",
+        arch = ("Spot-Up Shooter",
                 "An off-ball threat who punishes help defense from deep.")
     elif pc("Paint%") >= 70 and pc("REB") >= 60:
-        arch = ("", "Interior Presence",
+        arch = ("Interior Presence",
                 "Finishes inside efficiently and commands the paint.")
     elif OVR >= 56:
-        arch = ("", "Versatile Contributor",
+        arch = ("Versatile Contributor",
                 "Well-rounded across the board without one dominant trait.")
     elif pc("+/-") >= 75:
-        arch = ("", "High-Impact Role Player",
+        arch = ("High-Impact Role Player",
                 "The team plays better with them on the floor.")
     else:
-        arch = ("", "Developing Player",
+        arch = ("Developing Player",
                 "Still building their game — more tracked games will sharpen it.")
 
     st.markdown(
         f"<div style='background:linear-gradient(135deg,#1a1200,#0d1117);"
         f"border:1px solid {ACCENT};border-radius:12px;padding:14px 18px;"
         f"margin-bottom:14px;display:flex;align-items:center;gap:14px'>"
-        f"<span style='font-size:32px'>{arch[0]}</span><div>"
-        f"<div style='font-size:15px;font-weight:800;color:{ACCENT}'>{arch[1]}</div>"
-        f"<div style='font-size:12px;color:#8b949e;margin-top:3px'>{arch[2]}</div>"
+        f"<div>"
+        f"<div style='font-size:10px;font-weight:700;letter-spacing:.08em;"
+        f"color:#8b949e;text-transform:uppercase'>Scouting role</div>"
+        f"<div style='font-size:15px;font-weight:800;color:{ACCENT}'>{arch[0]}</div>"
+        f"<div style='font-size:12px;color:#8b949e;margin-top:3px'>{arch[1]}</div>"
         f"</div></div>", unsafe_allow_html=True)
 
     strengths, weaknesses = [], []

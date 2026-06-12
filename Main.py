@@ -14,46 +14,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# ── Page config (respects wide_mode setting) ───────────────────────────────────
-_layout = "wide"
-try:
-    from database.db import query as _q
-    _rows = _q("SELECT value FROM app_settings WHERE key='wide_mode'")
-    if _rows and _rows[0]["value"] == "0":
-        _layout = "centered"
-except Exception:
-    # Must stay silent: this runs BEFORE st.set_page_config, and Streamlit
-    # forbids any other st.* call (warning/error) first. Falls back to "wide".
-    pass
+# ── Page boot (config + global CSS + theme + login + cache sync) ───────────────
+from helpers.ui import (page_chrome, page_header, style_fig as _style,
+                        gauge as _gauge, GOOD, BAD, AWAY)
 
-st.set_page_config(page_title="Analytics Hub · APP5", page_icon="🏀", layout=_layout,
-                   initial_sidebar_state="expanded")
-
-# ── Global CSS + theme ─────────────────────────────────────────────────────────
-_css_path = Path(__file__).resolve().parent / "assets" / "style.css"
-if _css_path.exists():
-    st.markdown(f"<style>{_css_path.read_text(encoding='utf-8')}</style>",
-                unsafe_allow_html=True)
-try:
-    from helpers.settings_utils import get_all_settings, apply_theme_css
-    apply_theme_css(get_all_settings())
-except Exception:
-    # Stay silent: a broken settings row/theme must never block app boot; the
-    # static style.css above already supplies sane :root fallback tokens.
-    pass
-
-# ── Login gate (no-op until [auth] is configured in secrets) ────────────────────
-from helpers.auth import require_login
-require_login()
+_cfg, ACCENT = page_chrome("Analytics Hub")
 
 import pandas as pd
 import plotly.graph_objects as go
-from helpers.ui import (style_fig as _style, gauge as _gauge, GOOD, BAD)
-from helpers.settings_utils import get_setting
 import helpers.trends as TRD
-
-ACCENT = get_setting("accent_color", "#f0a500")
-AWAY = "#e74c3c"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -204,10 +173,9 @@ def _dashboard(gender):
 #  HEADER + LEAGUE TOGGLE
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.markdown(
-    "<div class='lab-hero'><h1>Analytics Hub — Executive Dashboard</h1>"
-    "<p>Track it · analyze it · predict it · scout it. The whole program at a glance.</p>"
-    "</div>", unsafe_allow_html=True)
+page_header("Analytics Hub — Executive Dashboard",
+            sub="Track it · analyze it · predict it · scout it. "
+                "The whole program at a glance.")
 
 _gender = "F"
 try:

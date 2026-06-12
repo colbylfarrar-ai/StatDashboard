@@ -43,6 +43,14 @@ BAD     = "#e74c3c"
 PALETTE = ["#58a6ff", "#3fb950", "#f0a500", "#bc8cff", "#ff7b72", "#56d4dd",
            "#e3b341", "#ec6cb9", "#79c0ff", "#d29922", "#7ee787", "#ffa657"]
 
+# Shared Plotly colorscales, anchored to the constants above.
+# HEAT: sequential card-bg → GOOD — the default for more-is-better heatmaps
+# (zero/low cells fade into the card instead of shouting).
+HEAT = [[0.0, CARD_BG], [1.0, GOOD]]
+# DIVERGE: BAD → dark neutral → GOOD — for signed metrics centred on 0/average
+# (net rating, SMOE, +/-); pin the midpoint to the neutral value (e.g. zmid=0).
+DIVERGE = [[0.0, BAD], [0.5, GRID], [1.0, GOOD]]
+
 # Match the in-app system font stack so chart text reads as one with the UI.
 FONT_FAMILY = ("'Segoe UI Variable Display','Segoe UI',-apple-system,"
                "BlinkMacSystemFont,Inter,Roboto,sans-serif")
@@ -90,7 +98,38 @@ def page_chrome(title: str = None):
     apply_theme_css(cfg)
     from helpers.auth import require_login
     require_login()
+    # Always-available data refresh — kept LAST in page_chrome. Clearing stamps
+    # a session time string; first run of a session shows no caption.
+    if st.sidebar.button("↻ Refresh data", key="_chrome_refresh"):
+        from datetime import datetime
+        st.cache_data.clear()
+        st.session_state["_data_refreshed_at"] = (
+            datetime.now().strftime("%I:%M %p").lstrip("0"))
+        st.rerun()
+    _refreshed = st.session_state.get("_data_refreshed_at")
+    if _refreshed:
+        st.sidebar.caption(f"Data refreshed at {_refreshed}")
     return cfg, get_setting("accent_color", "#f0a500")
+
+
+def page_header(title: str, sub: str = None, chips: list = None):
+    """Unified page header — a drop-in replacement for a bare ``st.title``.
+
+    ``sub`` renders as an ``st.caption`` line under the title. ``chips`` is an
+    optional list of short strings rendered as one compact row of ``.stat-chip``
+    pills (assets/style.css). With only ``title`` it is byte-for-byte
+    ``st.title``, so pages can adopt it with no layout surprises.
+    """
+    st.title(title)
+    if sub:
+        st.caption(sub)
+    if chips:
+        row = "".join(f"<span class='stat-chip'>{html.escape(str(c))}</span>"
+                      for c in chips)
+        st.markdown(
+            "<div style='display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 10px'>"
+            f"{row}</div>",
+            unsafe_allow_html=True)
 
 
 # ── Chart primitives ─────────────────────────────────────────────────────────────
@@ -112,17 +151,22 @@ def gender_label(g):
 
 
 def gender_radio(container=None, *, default="F", key=None, label="League",
-                 horizontal=True):
+                 horizontal=True, include_all=False):
     """Shared Girls/Boys league toggle. Returns 'F' or 'M'.
+
+    ``include_all=True`` prepends an "All" option which returns ``None`` —
+    matching the existing "All → no gender filter" convention (Officials page).
+    Pass ``default=None`` to start on "All".
 
     `container` is an st.columns slot (or st, the default). Single source for the
     st.radio(['F','M']) pattern repeated across Rankings / Team Dashboard /
     Players / War Room.
     """
     c = container if container is not None else st
-    opts = ["F", "M"]
+    opts = ([None, "F", "M"] if include_all else ["F", "M"])
     return c.radio(label, opts, index=opts.index(default),
-                   format_func=gender_label, horizontal=horizontal, key=key)
+                   format_func=lambda g: "All" if g is None else gender_label(g),
+                   horizontal=horizontal, key=key)
 
 
 def score_card(rows, *, footer="", footer_top=False, style_names=False):
@@ -235,14 +279,16 @@ def grid(df, key, *, height=480, page_size=25, fit_columns=False):
     explorable table (rankings, stat dumps) where the user benefits from in-grid
     sort/filter the static dataframe can't give."""
     try:
-        from st_aggrid import AgGrid, GridOptionsBuilder
+        from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
         gob = GridOptionsBuilder.from_dataframe(df)
         gob.configure_default_column(filter=True, sortable=True, resizable=True)
         gob.configure_pagination(paginationAutoPageSize=False,
                                  paginationPageSize=page_size)
+        # NO_UPDATE: sort/filter/page clicks stay inside the grid iframe instead
+        # of rerunning the whole host page (nothing reads the grid's return).
         AgGrid(df, gridOptions=gob.build(), height=height, theme="streamlit",
                key=key, fit_columns_on_grid_load=fit_columns,
-               allow_unsafe_jscode=True)
+               update_mode=GridUpdateMode.NO_UPDATE)
     except Exception:
         st.dataframe(df, hide_index=True, width="stretch", key=f"{key}_native")
 

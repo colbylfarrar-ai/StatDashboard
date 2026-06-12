@@ -36,7 +36,8 @@ from database.db import query
 from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
-                        AWAY, gender_radio, gender_label, score_card)
+                        AWAY, gender_radio, score_card,
+                        page_header, empty_state, HEAT, DIVERGE)
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
@@ -242,7 +243,10 @@ def _team_tracked_deep(team_id):
 #  PAGE HEADER + GENDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.title("Rankings")
+page_header("Rankings",
+            sub="Opponent-adjusted power, résumé and possession analytics "
+                "across the whole league — results power every team, tracked "
+                "games add the deep layer.")
 
 gender = gender_radio()
 
@@ -276,8 +280,9 @@ tracked = _tracked_ratings(gender)
 form_stats = _form_stats(gender)
 
 if not scored:
-    st.info("No finished games for this league yet. Enter results in the Input Hub "
-            "and they'll rank here.")
+    empty_state("No finished games for this league yet",
+                "Enter results in the Input Hub and they'll rank here.",
+                cta="Open the Input Hub", page="pages/1_Input_Hub.py")
     st.stop()
 
 name_of = {tid: r["name"] for tid, r in scored.items()}
@@ -302,15 +307,6 @@ pack = _tracked_pack(gender, tracked)
 with tab_over:
     all_rows = list(scored.values())
 
-    # ── futuristic league identity band ──────────────────────────────────────
-    _n_games = int(sum(r["GP"] for r in all_rows) // 2)
-    _trk_games = sum(1 for _ in TR._finished_games(gender=gender,
-                                                   tracked_only=True))
-    _avg_ppg = sum(r["PPG"] for r in all_rows) / len(all_rows)
-    _top = min(all_rows, key=lambda r: r["Rank"])
-    _best_off = max(all_rows, key=lambda r: r["PPG"])
-    _best_def = min(all_rows, key=lambda r: r["oPPG"])
-
     def _form_leader(metric, hi=True, need=None, pool=None):
         cand = [(t, form_stats[t]) for t in form_stats
                 if form_stats[t].get(metric) is not None
@@ -319,25 +315,6 @@ with tab_over:
         if not cand:
             return None, None
         return (max if hi else min)(cand, key=lambda c: c[1][metric])
-
-    _hot_t, _hot = _form_leader("streak_len", need=lambda r: r["streak_type"] == "W")
-    _league_name = gender_label(gender)
-    _chips = "".join(
-        f"<span class='stat-chip'>{lbl} <b>{val}</b></span>"
-        for lbl, val in [
-            ("Teams", len(all_rows)), ("Games", _n_games),
-            ("Tracked", _trk_games), ("Avg PPG", f"{_avg_ppg:.1f}"),
-            ("#1", _top["name"]),
-        ])
-    st.markdown(
-        f"<div class='lab-hero'>"
-        f"<div class='lab-hero-name' style='color:{ACCENT}'>{_league_name} "
-        f"Basketball · Command Center</div>"
-        f"<div class='lab-hero-sub'>Opponent-adjusted power, résumé and "
-        f"possession analytics across the whole league — results power every "
-        f"team, tracked games add the deep layer.</div>"
-        f"<div class='lab-hero-chips'>{_chips}</div></div>",
-        unsafe_allow_html=True)
 
     st.caption(
         "**Source of truth.** Results-only power ratings for every team — built "
@@ -535,7 +512,8 @@ with tab_over:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 2 — TEAM  (per-team deep dive, moved out of Overview)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_team:
+@st.fragment
+def _fx_team():
     st.caption("One team, every angle — pick a team for its record, résumé "
                "splits, composites, league percentile profile and full schedule. "
                "Both the league ranking and (where tracked) the possession "
@@ -734,9 +712,11 @@ with tab_team:
     _lab_hdr("Tracked deep dive")
     _deep = _team_tracked_deep(pick)
     if not _deep:
-        st.info("No tracked games for this team yet — track a game in the Game "
-                "Tracker to unlock possession ratings, the four factors, "
-                "quarter-by-quarter PPP and win/loss patterns.")
+        empty_state("No tracked games for this team yet",
+                    "Track a game in the Game Tracker to unlock possession "
+                    "ratings, the four factors, quarter-by-quarter PPP and "
+                    "win/loss patterns.",
+                    cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     else:
         st.caption(
             f"Possession-based over **{_deep['gp']} tracked game"
@@ -893,6 +873,11 @@ with tab_team:
                 _style(fdm, 300)
                 st.plotly_chart(fdm, width="stretch")
 
+
+with tab_team:
+    _fx_team()
+
+
 with tab_over:
     # ── Hot & cold (current streaks across the league) ───────────────────────
     streaks = []
@@ -932,8 +917,10 @@ with tab_over:
 @st.fragment
 def _fx_track():
     if not tracked:
-        st.info("No tracked games for this league yet. Track a game in the Game "
-                "Tracker and its advanced ratings appear here.")
+        empty_state("No tracked games for this league yet",
+                    "Track a game in the Game Tracker and its advanced ratings "
+                    "appear here.",
+                    cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     else:
         st.caption(
             "Possession-based ratings over **tracked games only** — a far smaller, "
@@ -1013,8 +1000,10 @@ with tab_track:
 @st.fragment
 def _fx_chart():
     if not tracked:
-        st.info("Team charts are built from tracked-game events — none yet for "
-                "this league.")
+        empty_state("No tracked-game events yet",
+                    "Team charts are built from tracked-game events — none yet "
+                    "for this league.",
+                    cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     else:
         st.caption("How teams score, how they win, and who can shoot — across all "
                    "tracked games in this league. Built from per-game team boxes, "
@@ -1057,10 +1046,10 @@ def _fx_chart():
         # ════════════════ EVERY HEADLINE STAT — SORTED BARS ════════════════
         st.markdown("<div class='section-hdr'>Every headline team stat</div>",
                     unsafe_allow_html=True)
-        st.caption("Each headline team stat as a sorted bar — one bar per team, "
-                   "respecting the team filter. Four Factors, shooting, efficiency "
-                   "and the core box rates; the full stat set lives in the Stat "
-                   "Lab explorer further down.")
+        st.caption("Pick a headline stat to chart as a sorted bar — one bar per "
+                   "team, respecting the team filter. Four Factors, shooting, "
+                   "efficiency and the core box rates; the full stat set lives "
+                   "in the Stat Lab explorer further down.")
         _gallery = [
             ("eFG", "Effective FG%", "eFG%", True, False, 1),
             ("oeFG", "Opponent eFG% (lower better)", "Opp eFG%", True, True, 1),
@@ -1086,11 +1075,19 @@ def _fx_chart():
             ("stl_pg", "Steals / game", "STL/g", False, False, 1),
             ("blk_pg", "Blocks / game", "BLK/g", False, False, 1),
         ]
-        _gcols = st.columns(2)
-        for _i, (_mk, _ti, _ax, _pc, _as, _nn) in enumerate(_gallery):
-            if all(_mk in ts[t] for t in teams):
+        _avail = [g for g in _gallery if all(g[0] in ts[t] for t in teams)]
+        _by_ax = {g[2]: g for g in _avail}
+        _pick_ax = st.pills("Stat", list(_by_ax), default=next(iter(_by_ax), None),
+                            key="gal_pick")
+        if _pick_ax:
+            _mk, _ti, _ax, _pc, _as, _nn = _by_ax[_pick_ax]
+            _hbar(_mk, _ti, _ax, pct=_pc, asc=_as, n=_nn, key=f"gal_{_mk}")
+        if st.checkbox("Show all stats as a chart wall", key="gal_all"):
+            _gcols = st.columns(2)
+            for _i, (_mk, _ti, _ax, _pc, _as, _nn) in enumerate(_avail):
                 with _gcols[_i % 2]:
-                    _hbar(_mk, _ti, _ax, pct=_pc, asc=_as, n=_nn, key=f"gal_{_mk}")
+                    _hbar(_mk, _ti, _ax, pct=_pc, asc=_as, n=_nn,
+                          key=f"galw_{_mk}")
 
         # ════════════════ SCORING ════════════════
         st.markdown("<div class='section-hdr'>Scoring</div>",
@@ -1127,7 +1124,7 @@ def _fx_chart():
                 x=ortg, y=drtg, mode="markers+text", text=labels,
                 textposition="top center", textfont=dict(size=9),
                 marker=dict(size=[max(8, p / 2) for p in pace], color=ortg,
-                            colorscale="Viridis", showscale=False,
+                            colorscale=HEAT, showscale=False,
                             line=dict(width=1, color="#30363d"))))
             if ortg:
                 wfig.add_vline(x=sum(ortg) / len(ortg),
@@ -1147,7 +1144,7 @@ def _fx_chart():
                 mode="markers+text", text=labels, textposition="top center",
                 textfont=dict(size=9),
                 marker=dict(size=12, color=[ts[t]["ast_per_fgm"] for t in teams],
-                            colorscale="Tealgrn", showscale=True,
+                            colorscale=HEAT, showscale=True,
                             colorbar=dict(title="AST/<br>FGM", thickness=10),
                             line=dict(width=1, color="#30363d"))))
             mfig.update_xaxes(title="Turnovers / game →")
@@ -1424,7 +1421,7 @@ def _fx_evr():
         land = go.Figure(go.Scatter(
             x=xs, y=ys, mode="markers",
             marker=dict(size=[max(7, p / 4) for p in powers], color=powers,
-                        colorscale="Turbo", showscale=True, cmin=0, cmax=100,
+                        colorscale=DIVERGE, showscale=True, cmin=0, cmax=100,
                         colorbar=dict(title="Power", thickness=12),
                         line=dict(width=0.5, color="#0d1117")),
             text=txt,
@@ -1450,7 +1447,7 @@ def _fx_evr():
                 x=ortg, y=drtg, mode="markers+text", text=lbl,
                 textposition="top center", textfont=dict(size=9),
                 marker=dict(size=[max(10, p / 2) for p in pace], color=net,
-                            colorscale="RdYlGn", cmid=0, showscale=True,
+                            colorscale=DIVERGE, cmid=0, showscale=True,
                             colorbar=dict(title="Net", thickness=12),
                             line=dict(width=1, color="#30363d")),
                 hovertemplate="%{text}<br>ORtg %{x:.1f} · DRtg %{y:.1f}"
@@ -1467,7 +1464,8 @@ def _fx_evr():
             st.caption("For a single team's gauges and Team-DNA radar, open that "
                        "team in **Team Analytics → Advanced → Efficiency & DNA**.")
         else:
-            st.info("Track games to unlock the possession-based KenPom map.")
+            empty_state("No tracked games yet",
+                        "Track games to unlock the possession-based KenPom map.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  POWER TIERS
@@ -1569,7 +1567,7 @@ def _fx_evr():
             colors.append(p)
         tree = go.Figure(go.Treemap(
             labels=labels, parents=parents, values=vals, branchvalues="total",
-            marker=dict(colors=colors, colorscale="Turbo", cmid=50, cmin=0,
+            marker=dict(colors=colors, colorscale=DIVERGE, cmid=50, cmin=0,
                         cmax=100, showscale=True,
                         colorbar=dict(title="Power", thickness=12)),
             hovertemplate="<b>%{label}</b><br>%{value} wins<extra></extra>",
@@ -1596,7 +1594,7 @@ def _fx_evr():
         nm = [name_of.get(t, str(t)) for t in fids]
         pyfig = go.Figure(go.Scatter(
             x=pw, y=aw, mode="markers",
-            marker=dict(size=9, color=lk, colorscale="RdYlGn", cmid=0,
+            marker=dict(size=9, color=lk, colorscale=DIVERGE, cmid=0,
                         showscale=True, colorbar=dict(title="Luck", thickness=12),
                         line=dict(width=0.5, color="#0d1117")),
             text=nm,
@@ -1672,7 +1670,7 @@ def _fx_evr():
         traj = go.Figure(go.Scatter(
             x=sx, y=sy, mode="markers",
             marker=dict(size=9, color=[form_stats[t]["mom_delta"] for t in fids],
-                        colorscale="RdYlGn", cmid=0, showscale=True,
+                        colorscale=DIVERGE, cmid=0, showscale=True,
                         colorbar=dict(title="Δ", thickness=12),
                         line=dict(width=0.5, color="#0d1117")),
             text=[name_of.get(t, str(t)) for t in fids],
@@ -1735,7 +1733,7 @@ def _fx_evr():
                 text=[n["name"] for n in nodes], textposition="top center",
                 textfont=dict(size=9),
                 marker=dict(size=[max(10, n["degree"] * 1.6) for n in nodes],
-                            color=[n["power"] for n in nodes], colorscale="Turbo",
+                            color=[n["power"] for n in nodes], colorscale=DIVERGE,
                             cmin=0, cmax=100, showscale=True,
                             colorbar=dict(title="Power", thickness=12),
                             line=dict(width=1, color="#0d1117")),
@@ -1795,7 +1793,8 @@ with tab_gloss:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — COMPARE  (two teams, head to head)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_cmp:
+@st.fragment
+def _fx_cmp():
     st.caption("Two teams head to head — power and results always; four factors "
                "and efficiency when both teams are tracked.")
     _cts = pack["ts"]
@@ -1868,3 +1867,7 @@ with tab_cmp:
             ]), unsafe_allow_html=True)
         else:
             st.info("Four-factor & efficiency compare needs both teams tracked.")
+
+
+with tab_cmp:
+    _fx_cmp()

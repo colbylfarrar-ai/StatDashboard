@@ -350,3 +350,107 @@ else:
                        "2/3 re-derive automatically, and a 2↔3 flip on a made "
                        "shot updates +/- (recompute the score above if the "
                        "drift banner appears).")
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  INSERT A MISSED EVENT — the basket the scorekeeper missed is no longer
+#  unrecoverable: the floor is cloned from the nearest logged event and the
+#  insert runs the normal live write path (snapshot, +/-, possession secs
+#  re-split around the new row).
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.divider()
+st.markdown("### Insert a missed event")
+st.caption("The on-floor five are cloned from the nearest logged event, "
+           "possession seconds are re-split around the insert, and +/- is "
+           "applied — the same write path as live logging. For a shot, add "
+           "its court location afterwards in **Fix a shot location**; "
+           "recompute the score above if the drift banner appears.")
+
+ins_type = st.selectbox("Event type", list(EL.EVENT_TYPES),
+                        key=f"ins_type_{gid}")
+with st.form(f"ins_form_{gid}", clear_on_submit=True):
+    ic1, ic2 = st.columns(2)
+    ins_q = ic1.number_input("Quarter", min_value=1, max_value=10, step=1,
+                             value=1)
+    ins_t = ic2.text_input("Clock (M:SS)", value="4:00",
+                           help="Time remaining in the period")
+
+    if ins_type == "shot":
+        s1, s2, s3 = st.columns([3, 1, 1])
+        ins_primary = s1.selectbox("Shooter", player_opts[1:])
+        ins_result = s2.selectbox("Result", ["make", "miss"])
+        ins_stype = s3.selectbox("2/3", ["2", "3"])
+        s4, s5, s6 = st.columns(3)
+        ins_zone = s4.selectbox("Zone", ["—"] + list(EL.ZONES))
+        ins_pass = s5.selectbox("Pass from", player_opts)
+        ins_created = s6.selectbox("Created by", player_opts)
+        s7, s8, s9 = st.columns(3)
+        ins_guarded = s7.selectbox("Guarded by", player_opts)
+        ins_rebound = s8.selectbox("Rebound by", player_opts)
+        ins_blocked = s9.selectbox("Blocked by", player_opts)
+    elif ins_type == "free_throw":
+        f1, f2, f3 = st.columns([3, 1, 2])
+        ins_primary = f1.selectbox("Shooter", player_opts[1:])
+        ins_result = f2.selectbox("Result", ["make", "miss"])
+        ins_rebound = f3.selectbox("Rebound by", player_opts)
+    elif ins_type == "foul":
+        f1, f2, f3 = st.columns([2, 2, 1])
+        ins_primary = f1.selectbox("Player fouled", player_opts[1:])
+        ins_fouler = f2.selectbox("Player who fouled", player_opts[1:])
+        ins_off = f3.selectbox("Official", official_opts)
+    else:  # turnover
+        f1, f2 = st.columns(2)
+        ins_primary = f1.selectbox("Turnover by", player_opts[1:])
+        ins_stolen = f2.selectbox("Stolen by", player_opts)
+
+    ins_go = st.form_submit_button("Insert event", type="primary")
+
+if ins_go:
+    _tm = _TIME_RE.match(ins_t.strip())
+    _mm, _ss = (int(p) for p in ins_t.strip().split(":")) if _tm else (0, 0)
+    _cap = 480 if int(ins_q) <= 4 else 240   # 8:00 quarters, 4:00 OTs
+    if not _tm:
+        st.error("Clock must be M:SS with seconds 00–59 (e.g. 4:05).")
+    elif _mm * 60 + _ss > _cap:
+        st.error(f"{ins_t.strip()} is more than the period holds "
+                 f"({_cap // 60}:00).")
+    elif label2pid.get(ins_primary) is None:
+        st.error("Pick the primary player.")
+    else:
+        ev = {"event_type": ins_type, "quarter": int(ins_q),
+              "time": ins_t.strip(),
+              "primary_player_id": label2pid.get(ins_primary)}
+        if ins_type == "shot":
+            ev.update(shot_result=ins_result, shot_type=int(ins_stype),
+                      zone=None if ins_zone == "—" else ins_zone,
+                      pass_from_id=label2pid.get(ins_pass),
+                      shot_created_by_id=label2pid.get(ins_created),
+                      guarded_by_id=label2pid.get(ins_guarded),
+                      rebound_by_id=label2pid.get(ins_rebound),
+                      blocked_by_id=label2pid.get(ins_blocked))
+        elif ins_type == "free_throw":
+            ev.update(shot_result=ins_result,
+                      rebound_by_id=label2pid.get(ins_rebound))
+        elif ins_type == "foul":
+            ev.update(secondary_player_id=label2pid.get(ins_fouler),
+                      official_id=name2oid.get(ins_off))
+        else:
+            ev.update(stolen_by_id=label2pid.get(ins_stolen))
+
+        _eid, _nfloor = EL.insert_missed_event(gid, ev)
+        _flash = [("success",
+                   f"Inserted — event #{_eid} now in the log. Recompute the "
+                   "final score above if it drifted.")]
+        if not _nfloor:
+            _flash.append(("warning",
+                           "No adjacent event to clone a lineup from — the "
+                           "insert carries no on-floor five, so it won't "
+                           "count toward minutes or +/-."))
+        elif _nfloor < 10:
+            _flash.append(("warning",
+                           f"Cloned floor has only {_nfloor} players — "
+                           "minutes/+/- follow whatever the adjacent event "
+                           "had."))
+        st.session_state["ee_flash"] = _flash
+        st.cache_data.clear()
+        st.rerun()

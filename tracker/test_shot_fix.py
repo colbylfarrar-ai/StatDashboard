@@ -95,4 +95,45 @@ ev = query("SELECT * FROM game_events WHERE id=?", (eid5,))[0]
 ok(ev["shot_x"] is None and ev["shot_y"] is None,
    "shot->turnover retype clears stale x/y")
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  insert_missed_event — the after-the-fact insert path
+# ══════════════════════════════════════════════════════════════════════════════
+# Q1 timeline so far: 7:40 shot (p1), 6:55 miss (p2). Insert a made FT by p2
+# at 7:00 — between them.
+pm_before = {r["player_id"]: r["plus_minus"]
+             for r in query("SELECT player_id, plus_minus FROM game_lineup_players WHERE game_id=?", (gid,))}
+score_before = EL.score_from_events(gid)
+
+ins_id, n_floor = EL.insert_missed_event(gid, {
+    "event_type": "free_throw", "quarter": 1, "time": "7:00",
+    "primary_player_id": p2, "shot_result": "make"})
+ok(n_floor == 2, "floor cloned from the adjacent event (2 players)")
+
+ins = query("SELECT * FROM game_events WHERE id=?", (ins_id,))[0]
+ok(ins["possession_secs"] == 40.0,
+   "insert's possession secs vs chrono predecessor (7:40 -> 7:00)")
+nxt = query("SELECT possession_secs FROM game_events WHERE id=?", (eid2,))[0]
+ok(nxt["possession_secs"] == 5.0,
+   "chrono successor re-split (7:00 -> 6:55)")
+floor_rows = query("SELECT player_id FROM game_event_lineup WHERE event_id=?",
+                   (ins_id,))
+ok({r["player_id"] for r in floor_rows} == {p1, p2},
+   "lineup snapshot rows written for the insert")
+
+score_after = EL.score_from_events(gid)
+ok(score_after == (score_before[0], score_before[1] + 1),
+   "made FT lands on the away score")
+pm_after = {r["player_id"]: r["plus_minus"]
+            for r in query("SELECT player_id, plus_minus FROM game_lineup_players WHERE game_id=?", (gid,))}
+ok(pm_after[p1] == pm_before[p1] - 1 and pm_after[p2] == pm_before[p2] + 1,
+   "+/- applied through the normal write path")
+
+# Insert before ALL events (Q1 7:50): floor clones from the NEXT event.
+ins2_id, n2 = EL.insert_missed_event(gid, {
+    "event_type": "turnover", "quarter": 1, "time": "7:50",
+    "primary_player_id": p1})
+ins2 = query("SELECT * FROM game_events WHERE id=?", (ins2_id,))[0]
+ok(n2 == 2 and ins2["possession_secs"] == 10.0,
+   "insert before everything: floor from successor, poss from quarter start")
+
 print(f"\nALL {PASS} CHECKS PASSED")

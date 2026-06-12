@@ -226,6 +226,61 @@ def update_event(game_id, ev_id, vals, pid2team):
          *[clean[f] for f in _ALL_FIELDS], ev_id))
 
 
+def insert_missed_event(game_id, ev):
+    """Insert an after-the-fact event (the basket the scorekeeper missed).
+
+    Runs the NORMAL live write path (game_events.log_event → snapshot, +/-,
+    x/y→zone) with the floor cloned from the temporally adjacent event, then
+    repairs the clock bookkeeping that an out-of-order insert breaks:
+      * the new event's possession_secs is computed against its CHRONO
+        predecessor (log_event uses insertion order, which is wrong here);
+      * the chrono successor's possession_secs is re-split, so per-player
+        minutes don't double-count the elapsed time around the insert.
+    Returns (event_id, n_floor_players) — n_floor_players 0 means no adjacent
+    event existed to clone a lineup from (first event of the game)."""
+    import helpers.game_events as GE
+
+    q = int(ev.get("quarter") or 1)
+    tsec = GE.time_to_secs(str(ev.get("time") or "0:00"))
+    knew = (q, -tsec)
+
+    prev_ev = next_ev = None
+    for e in query("SELECT id, quarter, time FROM game_events WHERE game_id=?",
+                   (game_id,)):
+        k = (e["quarter"], -GE.time_to_secs(e["time"]))
+        if k <= knew and (prev_ev is None
+                          or k > (prev_ev["quarter"],
+                                  -GE.time_to_secs(prev_ev["time"]))):
+            prev_ev = e
+        if k > knew and (next_ev is None
+                         or k < (next_ev["quarter"],
+                                 -GE.time_to_secs(next_ev["time"]))):
+            next_ev = e
+
+    adjacent = prev_ev or next_ev
+    on_court = []
+    if adjacent:
+        on_court = [(r["player_id"], r["team_id"]) for r in query(
+            "SELECT player_id, team_id FROM game_event_lineup WHERE event_id=?",
+            (adjacent["id"],))]
+    offs = [r["official_id"] for r in query(
+        "SELECT official_id FROM game_lineup_officials WHERE game_id=?",
+        (game_id,))]
+
+    eid = GE.log_event(game_id, ev, on_court, offs)
+
+    start = (GE.time_to_secs(prev_ev["time"])
+             if prev_ev and prev_ev["quarter"] == q
+             else GE.quarter_start_secs(q))
+    execute("UPDATE game_events SET possession_secs=? WHERE id=?",
+            (max(0.0, start - tsec), eid))
+    if next_ev and next_ev["quarter"] == q:
+        execute("UPDATE game_events SET possession_secs=? WHERE id=?",
+                (max(0.0, tsec - GE.time_to_secs(next_ev["time"])),
+                 next_ev["id"]))
+    return eid, len(on_court)
+
+
 def set_shot_location(game_id, ev_id, x, y, pid2team):
     """Move a shot's tap-captured location (the mistap fixer). The x/y court-feet
     are the source of truth for WHERE: zone and 2/3 are re-derived from them —

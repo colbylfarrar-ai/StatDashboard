@@ -24,6 +24,7 @@ from database.db import query
 from helpers.box_score import render_box_score
 from helpers.ui import page_chrome, page_header, score_card, team_color, empty_state
 import helpers.team_ratings as TR
+import helpers.predictor as PRED
 import helpers.stats as S
 
 _cfg, ACCENT = page_chrome("Schedule")
@@ -122,7 +123,9 @@ def _games_on(date_str):
     return query("""
         SELECT g.id, g.date, g.location, g.tracked, g.video_url,
                g.home_score, g.away_score, g.team1_id, g.team2_id,
-               t1.name AS t1, t2.name AS t2
+               t1.name AS t1, t2.name AS t2, t1.gender AS gender,
+               EXISTS(SELECT 1 FROM game_events ge
+                      WHERE ge.game_id = g.id) AS has_events
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
@@ -133,12 +136,24 @@ def _games_on(date_str):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _rank_of():
-    """{team_id: rank} from results-only ratings (per-gender ranks)."""
+    """{team_id: rank} from results-only ratings (per-gender ranks). Built on
+    the cached per-gender ratings so the rank prefix on a preview card always
+    agrees with the ratings the projection used."""
     out = {}
     for gdr in ("M", "F"):
-        for tid, r in TR.score_ratings(gender=gdr).items():
+        for tid, r in _ratings(gdr).items():
             out[tid] = r["Rank"]
     return out
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ratings(g):
+    return TR.score_ratings(gender=g)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _tratings(g):
+    return TR.tracked_ratings(gender=g)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -288,6 +303,15 @@ def _day_section():
         if st.checkbox("Load box score", key=key):
             render_box_score(game_id)
 
+    def _preview(g):
+        """The model's pre-game read on an unplayed game. Home = team1 (the
+        page's 'away @ home' convention everywhere). None when either team is
+        unrated."""
+        return PRED.predict_game(g["team1_id"], g["team2_id"],
+                                 scored=_ratings(g["gender"]),
+                                 tracked=_tratings(g["gender"]),
+                                 home=g["team1_id"])
+
     # ── Day at a Glance ─────────────────────────────────────────────────────────
     st.markdown("<div class='section-hdr'>Day at a Glance</div>",
                 unsafe_allow_html=True)
@@ -306,13 +330,40 @@ def _day_section():
     c[2].metric("Largest margin", str(largest_mov) if scored else "—")
     c[3].metric("Tracked", str(len(tracked_games)))
 
-    # ── Scheduled day — games on the calendar, but nothing played yet ──────────
+    # ── Scheduled day — nothing played yet, so this is GAME PREP: matchup
+    #    preview cards with the model's projection instead of results copy. ──
     if not scored:
-        st.markdown("<div class='section-hdr'>Scheduled — not played yet</div>",
+        st.markdown("<div class='section-hdr'>Game previews</div>",
                     unsafe_allow_html=True)
+        rank_of = _rank_of()
         for g in day_games:
-            st.markdown(f"- **{g['t2']}** @ **{g['t1']}** · {_fmt_long(g['date'])}")
-        st.stop()
+            pred = _preview(g)
+            with st.container(border=True):
+                r_home = rank_of.get(g["team1_id"])
+                r_away = rank_of.get(g["team2_id"])
+                away = (f"#{r_away} " if r_away else "") + g["t2"]
+                home = (f"#{r_home} " if r_home else "") + g["t1"]
+                pv1, pv2, pv3 = st.columns([4, 2, 2])
+                pv1.markdown(f"**{away}** @ **{home}**")
+                if g["has_events"]:
+                    pv1.caption("🔴 Live — being tracked right now")
+                elif g["location"]:
+                    pv1.caption(g["location"])
+                if pred is None:
+                    pv2.caption("Not enough results to project this one yet.")
+                else:
+                    fav = (pred["a_name"] if pred["favorite"] == pred["team_a"]
+                           else pred["b_name"])
+                    wp = max(pred["win_prob_a"], pred["win_prob_b"]) * 100
+                    pv2.metric("Projected (away–home)",
+                               f"{pred['pf_b']:.0f}–{pred['pf_a']:.0f}",
+                               f"total {pred['total']:.0f}", delta_color="off")
+                    pv3.metric(fav, f"{wp:.0f}%", pred["confidence"],
+                               delta_color="off")
+        st.caption("Opponent-adjusted projections with home court to the home "
+                   "team. The full margin breakdown and simulation live in the "
+                   "War Room.")
+        return
 
     # ── Game of the Day ─────────────────────────────────────────────────────────
     st.markdown("<div class='section-hdr'>Game of the Day</div>",
@@ -450,6 +501,13 @@ def _day_section():
             t1_cls = t2_cls = "score-loser"
             hs_s = as_s = "—"
             meta = "No score yet"
+            pred = _preview(g)
+            if pred:
+                fav = (pred["a_name"] if pred["favorite"] == pred["team_a"]
+                       else pred["b_name"])
+                wp = max(pred["win_prob_a"], pred["win_prob_b"]) * 100
+                meta = (f"Proj {pred['pf_b']:.0f}–{pred['pf_a']:.0f} · "
+                        f"{fav} {wp:.0f}%")
 
         tracked_badge = ("<span class='tracked-badge'>tracked</span>"
                          if g["tracked"] else "")

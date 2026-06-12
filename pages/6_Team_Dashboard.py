@@ -1592,6 +1592,51 @@ def _fx_sched():
                  height=min(680, 60 + 35 * len(sched_rows)),
                  column_config=sched_cfg)
 
+    # ── upcoming games — the model's pre-game read, for weekly prep ──────────
+    # Date floor: a past game whose score never got entered must not lead the
+    # "Upcoming" list. (Dates are ISO-normalised in the DB.) Today's games
+    # stay listed — live tracked games keep NULL scores until finish_game.
+    from datetime import datetime as _dt
+    _today = _dt.now().strftime("%Y-%m-%d")
+    up_rows = query("""
+        SELECT g.id, g.date, g.location, g.team1_id, g.team2_id,
+               t1.name AS t1, t2.name AS t2
+        FROM games g JOIN teams t1 ON t1.id = g.team1_id
+                     JOIN teams t2 ON t2.id = g.team2_id
+        WHERE (g.team1_id = ? OR g.team2_id = ?)
+          AND (g.home_score IS NULL OR g.away_score IS NULL)
+          AND g.date >= ?
+        ORDER BY g.date""", (team_id, team_id, _today))
+    if up_rows:
+        st.markdown("<div class='lab-hdr'>Upcoming — projections</div>",
+                    unsafe_allow_html=True)
+        up_disp = []
+        for g in up_rows:
+            at_home = g["team1_id"] == team_id
+            oid = g["team2_id"] if at_home else g["team1_id"]
+            opp = g["t2"] if at_home else g["t1"]
+            up_pred = PRED.predict_game(team_id, oid, scored=scored,
+                                        tracked=tracked,
+                                        home=(team_id if at_home else oid))
+            o_sc = scored.get(oid, {})
+            up_disp.append({
+                "Date": g["date"], "": "vs" if at_home else "@",
+                "Opponent": opp,
+                "Opp Rk": f"#{o_sc['Rank']}" if o_sc.get("Rank") else "—",
+                "Opp Rec": (f"{o_sc.get('W', 0)}-{o_sc.get('L', 0)}"
+                            if o_sc else "—"),
+                "Proj": (f"{up_pred['pf_a']:.0f}-{up_pred['pf_b']:.0f}"
+                         if up_pred else "—"),
+                "Our win %": (f"{up_pred['win_prob_a'] * 100:.0f}%"
+                              if up_pred else "—"),
+                "Call": up_pred["confidence"] if up_pred else "—",
+            })
+        st.dataframe(pd.DataFrame(up_disp), hide_index=True, width="stretch",
+                     height=min(420, 60 + 35 * len(up_disp)))
+        st.caption("Opponent-adjusted projection with home court at the actual "
+                   "venue. Open the **Scout** tab to build the game plan "
+                   "against the next opponent.")
+
     st.markdown("<div class='lab-hdr'>Box score</div>",
                 unsafe_allow_html=True)
     tracked_games = [g for g in log if g["tracked"]]

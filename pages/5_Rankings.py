@@ -41,6 +41,7 @@ from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
+import helpers.predictor as PRED
 import helpers.team_analytics as TA
 import helpers.stats as S
 import helpers.league_analytics as LA
@@ -1851,6 +1852,59 @@ def _fx_cmp():
             _trow("Strength of sched", _sa["SOS"], _sb["SOS"], fmt="{:.0f}"),
         ]), unsafe_allow_html=True)
         st.caption("Green = the better of the two · adj defense, lower is better.")
+
+        # ── head to head: what actually happened, then the model's call ──────
+        st.markdown("<div class='lab-hdr'>Head to head</div>",
+                    unsafe_allow_html=True)
+        _h2h = query("""
+            SELECT date, home_score, away_score, team1_id, team2_id
+            FROM games
+            WHERE home_score IS NOT NULL AND away_score IS NOT NULL
+              AND ((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))
+            ORDER BY date""", (cA, cB, cB, cA))
+        if _h2h:
+            # Strict comparisons per side — a tied score is neither team's win.
+            def _won_by(m, t):
+                if m["home_score"] == m["away_score"]:
+                    return False
+                home_won = m["home_score"] > m["away_score"]
+                return home_won == (m["team1_id"] == t)
+            _wa = sum(1 for m in _h2h if _won_by(m, cA))
+            _wb = sum(1 for m in _h2h if _won_by(m, cB))
+            _ties = len(_h2h) - _wa - _wb
+            st.markdown(f"**{team_short(name_of[cA])} {_wa} – "
+                        f"{_wb} {team_short(name_of[cB])}**"
+                        + (f" ({_ties} tie{'s' if _ties > 1 else ''})"
+                           if _ties else "")
+                        + " in actual meetings")
+            for m in _h2h:
+                _aw_won = m["away_score"] > m["home_score"]
+                _hm_won = m["home_score"] > m["away_score"]
+                st.caption(
+                    f"{m['date']} · {name_of[m['team2_id']]} "
+                    f"{'**' if _aw_won else ''}{m['away_score']}"
+                    f"{'**' if _aw_won else ''} @ {name_of[m['team1_id']]} "
+                    f"{'**' if _hm_won else ''}{m['home_score']}"
+                    f"{'**' if _hm_won else ''}")
+        else:
+            st.caption("These two haven't played each other yet.")
+
+        _pp = PRED.predict_game(cA, cB, scored=scored, tracked=tracked,
+                                home=None)
+        if _pp:
+            _pm = st.columns(3)
+            _pm[0].metric(team_short(name_of[cA]), f"{_pp['pf_a']:.0f}",
+                          f"{_pp['win_prob_a'] * 100:.0f}% win",
+                          delta_color="off")
+            _pm[1].metric("Neutral-floor spread",
+                          f"{team_short(name_of[_pp['favorite']])} "
+                          f"−{_pp['spread']:.1f}",
+                          _pp["confidence"], delta_color="off")
+            _pm[2].metric(team_short(name_of[cB]), f"{_pp['pf_b']:.0f}",
+                          f"{_pp['win_prob_b'] * 100:.0f}% win",
+                          delta_color="off")
+            st.caption("If they met on a neutral floor tonight — the full "
+                       "margin breakdown and simulation live in the War Room.")
 
         _ma, _mb = _cts.get(cA), _cts.get(cB)
         if _ma and _mb:

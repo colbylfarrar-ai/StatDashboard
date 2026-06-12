@@ -30,6 +30,7 @@ from helpers.ui import (page_chrome, style_fig as _style, empty_state, team_colo
 from helpers.cards import bar_h, team_short, style_df as _style_df
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
+import helpers.matchup_sheet as MS
 import helpers.predictor as PRED
 import helpers.simulation as SIM
 import helpers.player_ratings as PR
@@ -264,6 +265,23 @@ def _render_matchup():
                 tcl[1].metric(f"{team_short(pred['a_name'])} pts", f"{tk['pf_a']:.0f}")
                 tcl[2].metric(f"{team_short(pred['b_name'])} pts", f"{tk['pf_b']:.0f}")
                 tcl[3].metric("ORtg A / B", f"{tk['ortg_a']:.0f} / {tk['ortg_b']:.0f}")
+
+            # ── the takeaway artifact: a print-ready matchup one-pager ───────
+            from datetime import datetime as _dt
+            import re as _re
+            _sheet = MS.matchup_html(
+                pred, sim=sim, n_sims=n,
+                home_label=("Neutral floor" if home_arg is None
+                            else f"Home court: {name_of[home_arg]}"),
+                generated=_dt.now().strftime("%B %d, %Y"))
+            _slug = _re.sub(r"[^A-Za-z0-9]+", "_",
+                            f"{pred['a_name']}_vs_{pred['b_name']}").strip("_")
+            st.download_button(
+                "⬇ Download matchup one-pager (HTML)", _sheet,
+                file_name=f"matchup_{_slug}.html", mime="text/html",
+                key="wr_sheet_dl")
+            st.caption("Print-ready scouting sheet — open it and print to PDF, "
+                       "or text the file straight to the staff.")
 
 
 with tab_match:

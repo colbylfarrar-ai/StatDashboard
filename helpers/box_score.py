@@ -300,11 +300,11 @@ def render_box_score(game_id: int):
     tsq_h = TA.team_shot_quality(t1id, [game_id], events=events, rates=rates)
     tsq_a = TA.team_shot_quality(t2id, [game_id], events=events, rates=rates)
 
-    st.download_button(
-        "⬇ Download game recap (open & print to PDF)",
-        _recap(game_id),
-        file_name=f"recap_{t1name}_vs_{t2name}.html".replace(" ", "_"),
-        mime="text/html", key=f"bs{game_id}_recap")
+    from helpers.ui import pdf_or_html_download
+    pdf_or_html_download(
+        "Game recap", _recap(game_id),
+        f"recap_{t1name}_vs_{t2name}".replace(" ", "_"),
+        key=f"bs{game_id}_recap")
 
     tabs = st.tabs(["Overview", "Flow", "Shooting", "Quarters",
                     "Lineups", "Box Score", "Four Factors"])

@@ -289,7 +289,8 @@ h1{{margin:0;font-size:18px;letter-spacing:.2px}}
 .rng{{color:#222;font-size:11px;font-weight:600;margin:1px 0 8px}}
 h2{{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#111;
   border-bottom:1.5px solid #111;padding-bottom:2px;margin:11px 0 5px}}
-.cols{{display:flex;gap:20px}} .col{{flex:1}}
+table.cols{{width:100%;border-collapse:separate;border-spacing:10px 0;font-size:11px}}
+td.col{{width:50%;vertical-align:top;border:none;padding:0}}
 ul{{margin:2px 0;padding-left:15px}} li{{margin:2px 0}}
 table{{border-collapse:collapse;width:100%;font-size:11px}}
 th{{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;
@@ -297,7 +298,8 @@ th{{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;
 td{{padding:2px 6px;border-bottom:1px solid #ddd;vertical-align:top}}
 .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
 .note{{color:#555;font-size:10px}}
-.two{{display:flex;gap:20px;align-items:flex-start}} .two>div{{flex:1}}
+table.two{{width:100%;border-collapse:separate;border-spacing:10px 0;font-size:11px}}
+td.two-col{{width:50%;vertical-align:top;border:none;padding:0}}
 .foot{{margin-top:12px;color:#999;font-size:9px}}
 @media print{{.wrap{{padding:8px 12px}}}}
 </style></head><body><div class='wrap'>
@@ -305,18 +307,18 @@ td{{padding:2px 6px;border-bottom:1px solid #ddd;vertical-align:top}}
 <div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·
   Power #{sc['rank']}/{sc['of']}</div>
 <div class='rng'>{e(rng)}</div>
-<div class='cols'>
-  <div class='col'><h2>Guard them</h2><ul>{guard}</ul></div>
-  <div class='col'><h2>Attack them</h2><ul>{attack}</ul></div>
-</div>
-<div class='two'>
-  <div><h2>Four factors</h2>
+<table class='cols'><tr>
+  <td class='col'><h2>Guard them</h2><ul>{guard}</ul></td>
+  <td class='col'><h2>Attack them</h2><ul>{attack}</ul></td>
+</tr></table>
+<table class='two'><tr>
+  <td class='two-col'><h2>Four factors</h2>
     <table><tr><th>Factor</th><th class='n'>Val</th><th class='n'>%ile</th></tr>
-    {rows_f}</table></div>
-  <div><h2>Shooting by zone</h2>
+    {rows_f}</table></td>
+  <td class='two-col'><h2>Shooting by zone</h2>
     <table><tr><th>Zone</th><th>Type</th><th class='n'>FG · %</th></tr>
-    {zrows}</table></div>
-</div>
+    {zrows}</table></td>
+</tr></table>
 <h2>Personnel</h2>
 <table><tr><th>Player</th><th class='n'>PPG</th><th class='n'>RPG</th>
   <th class='n'>APG</th><th class='n'>FG%</th><th class='n'>3P%</th><th>Note</th></tr>

@@ -276,12 +276,11 @@ def _render_matchup():
                 generated=_dt.now().strftime("%B %d, %Y"))
             _slug = _re.sub(r"[^A-Za-z0-9]+", "_",
                             f"{pred['a_name']}_vs_{pred['b_name']}").strip("_")
-            st.download_button(
-                "⬇ Download matchup one-pager (HTML)", _sheet,
-                file_name=f"matchup_{_slug}.html", mime="text/html",
-                key="wr_sheet_dl")
-            st.caption("Print-ready scouting sheet — open it and print to PDF, "
-                       "or text the file straight to the staff.")
+            from helpers.ui import pdf_or_html_download
+            pdf_or_html_download("Matchup one-pager", _sheet,
+                                 f"matchup_{_slug}", key="wr_sheet_dl")
+            st.caption("Print-ready scouting sheet — text it straight to the "
+                       "staff.")
 
 
 with tab_match:

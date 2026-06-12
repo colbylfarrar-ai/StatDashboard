@@ -112,6 +112,31 @@ def page_chrome(title: str = None):
     return cfg, get_setting("accent_color", "#f0a500")
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _pdf_bytes(html_doc: str):
+    from helpers.pdf_export import html_to_pdf
+    return html_to_pdf(html_doc)
+
+
+def pdf_or_html_download(label: str, html_doc: str, basename: str, *, key: str):
+    """The one-click export pair: a real PDF (when an engine is installed —
+    xhtml2pdf ships in requirements) plus the HTML original; falls back to the
+    old HTML-only button with print instructions when no engine works."""
+    pdf = _pdf_bytes(html_doc)
+    if pdf:
+        c1, c2 = st.columns(2)
+        c1.download_button(f"⬇ {label} (PDF)", pdf,
+                           file_name=f"{basename}.pdf",
+                           mime="application/pdf", key=f"{key}_pdf")
+        c2.download_button("HTML version", html_doc,
+                           file_name=f"{basename}.html",
+                           mime="text/html", key=key)
+    else:
+        st.download_button(f"⬇ {label} (HTML — open & print to PDF)", html_doc,
+                           file_name=f"{basename}.html", mime="text/html",
+                           key=key)
+
+
 def page_header(title: str, sub: str = None, chips: list = None):
     """Unified page header — a drop-in replacement for a bare ``st.title``.
 

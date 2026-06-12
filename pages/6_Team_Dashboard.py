@@ -4360,10 +4360,10 @@ def _fx_scout():
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)
     html_doc = SC.printable_html(sc, opp_label)
-    st.download_button(
-        "Download printable scout (HTML — open & print to PDF)",
-        data=html_doc, file_name=f"scout_{sc['name'].replace(' ', '_')}.html",
-        mime="text/html", key="scout_dl")
+    from helpers.ui import pdf_or_html_download
+    pdf_or_html_download("Scout sheet", html_doc,
+                         f"scout_{sc['name'].replace(' ', '_')}",
+                         key="scout_dl")
     with st.expander("Preview printable sheet"):
         components.html(html_doc, height=620, scrolling=True)
 

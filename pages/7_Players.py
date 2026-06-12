@@ -1086,11 +1086,11 @@ def _fx_prof():
                         format_func=lambda i: labels[i], key="prof_pick")
     P = order[pick]
     pid = next(k for k, v in by_pid.items() if v is P)
-    st.download_button(
-        "⬇ Download player card (open & print to PDF)",
-        _player_card(pid, gender),
-        file_name=f"card_{P['name']}.html".replace(" ", "_"),
-        mime="text/html", key="prof_card_dl")
+    from helpers.ui import pdf_or_html_download
+    pdf_or_html_download(
+        "Player card", _player_card(pid, gender),
+        f"card_{P['name']}".replace(" ", "_"),
+        key="prof_card_dl")
 
     _comb = _combined(pid)
     if _comb and _comb["manual_gp"]:

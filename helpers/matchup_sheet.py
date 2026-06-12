@@ -57,14 +57,15 @@ def matchup_html(pred: dict, sim: dict | None = None, n_sims: int = 0,
         color: #5a6470; border-bottom: 2px solid #e3e6ea;
         padding-bottom: 4px; margin: 22px 0 8px; }}
   .meta {{ color: #5a6470; font-size: 12px; margin-bottom: 18px; }}
-  .score {{ display: flex; justify-content: space-between; align-items: center;
-            background: #f4f6f8; border-radius: 10px; padding: 14px 22px;
-            margin: 14px 0; }}
-  .score .team {{ text-align: center; }}
-  .score .team .nm {{ font-size: 14px; font-weight: 700; }}
-  .score .team .pts {{ font-size: 40px; font-weight: 900; line-height: 1.1; }}
-  .score .team .wp {{ font-size: 12px; color: #5a6470; }}
-  .score .mid {{ color: #8a94a0; font-size: 13px; text-align: center; }}
+  /* Table, not flexbox — xhtml2pdf (the PDF engine) has no flex support. */
+  table.score {{ width: 100%; background: #f4f6f8; border-radius: 10px;
+                 border-collapse: separate; margin: 14px 0; }}
+  table.score td {{ border: none; padding: 14px 22px; text-align: center;
+                    vertical-align: middle; }}
+  .score .nm {{ font-size: 14px; font-weight: 700; }}
+  .score .pts {{ font-size: 40px; font-weight: 900; line-height: 1.1; }}
+  .score .wp {{ font-size: 12px; color: #5a6470; }}
+  .score .mid {{ color: #8a94a0; font-size: 13px; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
   td {{ padding: 5px 8px; border-bottom: 1px solid #edf0f3;
         vertical-align: top; }}
@@ -78,15 +79,15 @@ def matchup_html(pred: dict, sim: dict | None = None, n_sims: int = 0,
   <h1>{a} vs {b}</h1>
   <div class="meta">{meta_line}</div>
 
-  <div class="score">
-    <div class="team"><div class="nm">{a}</div>
+  <table class="score"><tr>
+    <td><div class="nm">{a}</div>
       <div class="pts">{pred['pf_a']:.0f}</div>
-      <div class="wp">{wa:.0f}% win</div></div>
-    <div class="mid">projected<br>total {pred['total']:.0f}</div>
-    <div class="team"><div class="nm">{b}</div>
+      <div class="wp">{wa:.0f}% win</div></td>
+    <td class="mid">projected<br>total {pred['total']:.0f}</td>
+    <td><div class="nm">{b}</div>
       <div class="pts">{pred['pf_b']:.0f}</div>
-      <div class="wp">{wb:.0f}% win</div></div>
-  </div>
+      <div class="wp">{wb:.0f}% win</div></td>
+  </tr></table>
 
   <p><b>{fav} −{pred['spread']:.1f}</b> · {e(pred['confidence'])}</p>
 

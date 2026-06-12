@@ -21,7 +21,7 @@ COURT_W = 340   # tap-court image px (pre-transpose width → displayed height)
 
 initialize_database()
 _cfg = get_all_settings()
-apply_page_config(_cfg)
+apply_page_config(_cfg, "Game Tracker")
 
 from helpers.auth import require_login
 require_login()
@@ -433,6 +433,21 @@ on_court = (
     [(t1_pmap[s], t1id) for s in cur_t1 if s != "—"] +
     [(t2_pmap[s], t2id) for s in cur_t2 if s != "—"]
 )
+# Dedupe — the same player can be picked in two slots. Warn, never block logging.
+_seen = set()
+_deduped = []
+for pid, tid in on_court:
+    if pid not in _seen:
+        _seen.add(pid)
+        _deduped.append((pid, tid))
+if len(_deduped) < len(on_court):
+    st.warning("Duplicate lineup selection dropped — the same player was picked in more than one slot.")
+on_court = _deduped
+if on_court:
+    for _tname, _n in ((t1name, sum(1 for _, t in on_court if t == t1id)),
+                       (t2name, sum(1 for _, t in on_court if t == t2id))):
+        if _n < 5:
+            st.warning(f"{_tname}: only {_n} of 5 lineup slots selected.")
 on_court_offs = [off_imap[s] for s in cur_offs if s != "—"]
 
 # Build player option lists for the event form

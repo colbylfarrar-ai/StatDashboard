@@ -9,12 +9,16 @@ from helpers.settings_utils import get_all_settings, apply_page_config
 
 initialize_database()
 _cfg = get_all_settings()
-apply_page_config(_cfg)
+apply_page_config(_cfg, "Input Hub")
 
 from helpers.auth import require_login
 require_login()
 
 st.title("Input Hub")
+
+# Render messages queued before an st.rerun (an inline message would be wiped).
+for _level, _msg in st.session_state.pop("_flash", []):
+    {"success": st.success, "warning": st.warning, "error": st.error}[_level](_msg)
 
 CLASS_OPTIONS  = ["B2", "B1", "A", "2A", "3A", "4A", "5A", "6A", "N/A"]
 GENDER_OPTIONS = ["M", "F"]
@@ -156,6 +160,10 @@ def invalidate(*keys):
     for k in keys:
         st.session_state.pop(k, None)
 
+def flash(level, msg):
+    """Queue a message to render at the top of the page after the next st.rerun."""
+    st.session_state.setdefault("_flash", []).append((level, msg))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  NEW SEASON
@@ -219,12 +227,12 @@ with tab_teams:
 
         errs = apply_delta("teams_editor", orig, ins_team, upd_team, del_team)
         if errs:
-            st.error("\n".join(errs))
+            st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
         else:
-            st.success("Saved!")
-        invalidate("_teams_orig", "teams_editor")
-        st.cache_data.clear()
-        st.rerun()
+            flash("success", "Saved!")
+            invalidate("_teams_orig", "teams_editor")
+            st.cache_data.clear()
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -284,12 +292,12 @@ with tab_players:
 
             errs = apply_delta("players_editor", orig, ins_player, upd_player, del_player)
             if errs:
-                st.error("\n".join(errs))
+                st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
             else:
-                st.success("Saved!")
-            invalidate("_players_orig", "players_editor")
-            st.cache_data.clear()
-            st.rerun()
+                flash("success", "Saved!")
+                invalidate("_players_orig", "players_editor")
+                st.cache_data.clear()
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -304,6 +312,8 @@ with tab_games:
         orig = get_orig("_games_orig", load_games)
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
             columns=["team1","team2","date","location","home_score","away_score","tracked"])
+        # DateColumn needs real dates; DB stores ISO strings (normalize_date on save).
+        display["date"] = pd.to_datetime(display["date"], errors="coerce").dt.date
 
         st.data_editor(
             display,
@@ -313,7 +323,7 @@ with tab_games:
             column_config={
                 "team1":      st.column_config.SelectboxColumn("Home Team",    options=tnames, required=True),
                 "team2":      st.column_config.SelectboxColumn("Away Team",    options=tnames, required=True),
-                "date":       st.column_config.TextColumn("Date (YYYY-MM-DD)", required=True),
+                "date":       st.column_config.DateColumn("Date", format="YYYY-MM-DD", required=True),
                 "location":   st.column_config.TextColumn("Location"),
                 "home_score": st.column_config.NumberColumn("Home Score",      min_value=0, step=1),
                 "away_score": st.column_config.NumberColumn("Away Score",      min_value=0, step=1),
@@ -324,7 +334,12 @@ with tab_games:
 
         if st.button("Save Changes", key="save_games", type="primary"):
             tm = team_map()
+            skipped = []
             def ins_game(r):
+                if r.get("team1") and r.get("team1") == r.get("team2"):
+                    skipped.append(f"Skipped a game with '{r['team1']}' as both home "
+                                   "and away — pick two different teams.")
+                    return
                 if r.get("date","").strip() and r.get("team1") and r.get("team2"):
                     execute(
                         "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url) VALUES (?,?,?,?,?,?,?,?)",
@@ -334,6 +349,10 @@ with tab_games:
                          (r.get("video_url") or "").strip())
                     )
             def upd_game(r):
+                if r.get("team1") and r.get("team1") == r.get("team2"):
+                    skipped.append(f"Skipped game #{int(r['id'])} — '{r['team1']}' "
+                                   "can't play itself; pick two different teams.")
+                    return
                 live = _live_game(r["id"])
                 if live and live["tracked"]:
                     # Tracked games own their PBP-derived score — keep it. Apply
@@ -363,12 +382,16 @@ with tab_games:
 
             errs = apply_delta("games_editor", orig, ins_game, upd_game, del_game)
             if errs:
-                st.error("\n".join(errs))
+                st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
+                for _w in skipped:
+                    st.warning(_w)
             else:
-                st.success("Saved!")
-            invalidate("_games_orig", "games_editor")
-            st.cache_data.clear()
-            st.rerun()
+                flash("success", "Saved!")
+                for _w in skipped:
+                    flash("warning", _w)
+                invalidate("_games_orig", "games_editor")
+                st.cache_data.clear()
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -392,6 +415,8 @@ with tab_schedule:
         orig = get_orig("_sched_orig", lambda: load_games_for_team(team_id))
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
             columns=["opponent","date","home_away","location","team_score","opp_score","tracked"])
+        # DateColumn needs real dates; DB stores ISO strings (normalize_date on save).
+        display["date"] = pd.to_datetime(display["date"], errors="coerce").dt.date
 
         # Opponents are every team except the selected one
         opp_options = [t for t in tnames if t != selected_team]
@@ -403,7 +428,7 @@ with tab_schedule:
             width="stretch",
             column_config={
                 "opponent":   st.column_config.SelectboxColumn("Opponent",       options=opp_options, required=True),
-                "date":       st.column_config.TextColumn("Date (YYYY-MM-DD)",   required=True),
+                "date":       st.column_config.DateColumn("Date", format="YYYY-MM-DD", required=True),
                 "home_away":  st.column_config.SelectboxColumn("Home / Away",    options=HA_OPTIONS,  required=True),
                 "location":   st.column_config.TextColumn("Location"),
                 "team_score": st.column_config.NumberColumn("Team Score",        min_value=0, step=1),
@@ -474,12 +499,12 @@ with tab_schedule:
 
             errs = apply_delta("sched_editor", orig, ins_sched, upd_sched, del_sched)
             if errs:
-                st.error("\n".join(errs))
+                st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
             else:
-                st.success("Saved!")
-            invalidate("_sched_orig", "sched_editor", "_games_orig", "games_editor")
-            st.cache_data.clear()
-            st.rerun()
+                flash("success", "Saved!")
+                invalidate("_sched_orig", "sched_editor", "_games_orig", "games_editor")
+                st.cache_data.clear()
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -515,12 +540,12 @@ with tab_officials:
 
         errs = apply_delta("officials_editor", orig, ins_official, upd_official, del_official)
         if errs:
-            st.error("\n".join(errs))
+            st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
         else:
-            st.success("Saved!")
-        invalidate("_officials_orig", "officials_editor")
-        st.cache_data.clear()
-        st.rerun()
+            flash("success", "Saved!")
+            invalidate("_officials_orig", "officials_editor")
+            st.cache_data.clear()
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

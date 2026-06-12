@@ -17,7 +17,7 @@ from database.db import query, execute
 from helpers.ui import page_chrome, empty_state
 import helpers.manual_box as MB
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Setup")
 
 st.title("Setup")
 st.caption("Set the extras the Game Tracker doesn't capture — player positions & "
@@ -169,19 +169,36 @@ with t_box:
                 column_config={
                     "player_id": None,
                     "#": st.column_config.NumberColumn("#", disabled=True),
-                    "Player": st.column_config.TextColumn("Player", disabled=True)})
+                    "Player": st.column_config.TextColumn("Player", disabled=True),
+                    "MIN": st.column_config.NumberColumn(
+                        "MIN", min_value=0.0, max_value=200.0),
+                    **{c.upper(): st.column_config.NumberColumn(
+                           c.upper(), min_value=0, max_value=200, step=1)
+                       for c in MB.STAT_COLS if c != "min"}})
             if st.button(f"Save {_tnm} box", key=f"mb_save_{gsel['id']}_{_tid}"):
-                rows = [{"player_id": int(r["player_id"]),
-                         **{c: r[c.upper()] for c in MB.STAT_COLS}}
-                        for _, r in ed.iterrows()]
-                MB.save_manual_box(gsel["id"], _tid, rows)
-                box = MB.load_manual_box(gsel["id"])
-                if gsel["team1_id"] in box and gsel["team2_id"] in box:
-                    _hp = MB.team_totals(box[gsel["team1_id"]])["PTS"]
-                    _ap = MB.team_totals(box[gsel["team2_id"]])["PTS"]
-                    execute("UPDATE games SET home_score=?, away_score=? WHERE id=?",
-                            (_hp, _ap, gsel["id"]))
-                st.success(f"{_tnm} box saved.")
+                bad = []
+                for _, r in ed.iterrows():
+                    _v = lambda c: 0 if pd.isna(r[c]) else int(r[c])
+                    if (_v("FGM") > _v("FGA") or _v("TPM") > _v("TPA")
+                            or _v("FTM") > _v("FTA") or _v("TPM") > _v("FGM")
+                            or _v("TPA") > _v("FGA")):
+                        bad.append(f"#{r['#']} {r['Player']}")
+                if bad:
+                    st.error("Not saved — makes exceed attempts (or 3P exceed FG) "
+                             "for: " + ", ".join(bad) + ". Fix those rows and save "
+                             "again.")
+                else:
+                    rows = [{"player_id": int(r["player_id"]),
+                             **{c: r[c.upper()] for c in MB.STAT_COLS}}
+                            for _, r in ed.iterrows()]
+                    MB.save_manual_box(gsel["id"], _tid, rows)
+                    box = MB.load_manual_box(gsel["id"])
+                    if gsel["team1_id"] in box and gsel["team2_id"] in box:
+                        _hp = MB.team_totals(box[gsel["team1_id"]])["PTS"]
+                        _ap = MB.team_totals(box[gsel["team2_id"]])["PTS"]
+                        execute("UPDATE games SET home_score=?, away_score=? WHERE id=?",
+                                (_hp, _ap, gsel["id"]))
+                    st.success(f"{_tnm} box saved.")
 
         if MB.has_manual(gsel["id"]):
             st.divider()

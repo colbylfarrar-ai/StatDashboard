@@ -198,6 +198,7 @@ def render_box_score(game_id: int):
 
     home_pts, away_pts = team_pts[t1id], team_pts[t2id]
     home_win = home_pts > away_pts
+    away_win = away_pts > home_pts
     htb, atb = _team_total(boxes, t1id), _team_total(boxes, t2id)
     h_poss, a_poss = S.estimate_possessions(htb), S.estimate_possessions(atb)
     qs = sorted(quarters.keys())
@@ -209,10 +210,14 @@ def render_box_score(game_id: int):
         rates = S.shot_quality_rates()            # league-wide (zone,creation,guarded)
     except Exception:
         rates = {}
+        st.caption("League shot-quality baseline unavailable — team SMOE/xFG% "
+                   "may be unreliable for this game.")
     try:
         cr = S.creation_fg_rates()                # league-wide creation-bucket FG%
     except Exception:
         cr = {}
+        st.caption("League creation baseline unavailable — player SMOE may be "
+                   "unreliable for this game.")
 
     # ── season records + rankings for the header ───────────────────────────────
     scored, trk_rank = {}, {}
@@ -220,12 +225,14 @@ def render_box_score(game_id: int):
         scored = TR.score_ratings(gender=g["gender"])
     except Exception:
         scored = {}
+        st.caption("Season records / power rankings unavailable for this game.")
     try:
         trk = TR.tracked_ratings(gender=g["gender"])
         trk_rank = {tid: i + 1 for i, (tid, _) in enumerate(
             sorted(trk.items(), key=lambda kv: -kv[1]["NetRtg"]))}
     except Exception:
         trk_rank = {}
+        st.caption("Tracked rankings unavailable for this game.")
 
     def _team_tag(tid):
         s = scored.get(tid, {})
@@ -237,7 +244,7 @@ def render_box_score(game_id: int):
 
     # ── Scoreboard hero (always on top) ─────────────────────────────────────────
     def block(name, pts, won, color, tid):
-        cls = color if won else "#555d68"
+        cls = color if won else "#8b949e"
         tag = "▸ " if won else ""
         return (f"<div style='text-align:center'>"
                 f"<div style='font-size:15px;font-weight:700;color:#c9d1d9'>{tag}{name}</div>"
@@ -246,13 +253,18 @@ def render_box_score(game_id: int):
                 f"</div>")
 
     place = f" · {g['location']}" if g['location'] else ""
-    status = " · FINAL" if g['tracked'] else " · IN PROGRESS"
+    if g["tracked"]:
+        status = " · FINAL"
+    elif g["home_score"] is not None and g["away_score"] is not None:
+        status = " · FINAL (manual)"
+    else:
+        status = " · IN PROGRESS"
     st.markdown(
         f"<div class='game-hero'>"
         f"<div style='font-size:12px;color:#8b949e;margin-bottom:6px'>"
         f"{g['date']}{place}{status}</div>"
         f"<table style='width:100%;border:none'><tr>"
-        f"<td style='width:42%'>{block(t2name, away_pts, not home_win, away, t2id)}</td>"
+        f"<td style='width:42%'>{block(t2name, away_pts, away_win, away, t2id)}</td>"
         f"<td style='width:16%;text-align:center;color:#8b949e;font-size:18px'>@</td>"
         f"<td style='width:42%'>{block(t1name, home_pts, home_win, accent, t1id)}</td>"
         f"</tr></table></div>", unsafe_allow_html=True)
@@ -1031,11 +1043,13 @@ def render_box_score(game_id: int):
         try:
             ws = WPA.game_wpa(game_id, mode="scoring")["players"]
         except Exception:
-            ws = {}
+            ws = None
         try:
             wpp = WPA.game_wpa(game_id, mode="possession")["players"]
         except Exception:
-            wpp = {}
+            wpp = None
+        if ws is None or wpp is None:
+            st.caption("Win-probability data unavailable for this game.")
         rows = []
         for b in sorted([b for b in boxes.values() if b["team_id"] == tid],
                         key=lambda b: -S.game_score(b)):
@@ -1046,14 +1060,17 @@ def render_box_score(game_id: int):
             if b["FGA"]:
                 xfg = S.expected_fg_pct(pid, [game_id], events=events, rates=cr)
                 smoe = round((S.fg_pct(b) - xfg) * 100, 1)
-            rows.append({
+            row = {
                 "Player": b["name"], "MIN": b["MIN"], "PTS": b["PTS"],
                 "GS": round(S.game_score(b), 1), "PER": round(S.per(b), 1),
                 "FIC": round(S.fic(b), 1), "TS%": round(100*S.ts(b), 1),
-                "VPS": (round(S.vps(b), 2) if S.vps(b) is not None else None),
-                "WPA": round(ws.get(pid, {}).get("wpa", 0.0), 3),
-                "PossWPA": round(wpp.get(pid, {}).get("wpa", 0.0), 3),
-                "SMOE": smoe})
+                "VPS": (round(S.vps(b), 2) if S.vps(b) is not None else None)}
+            if ws is not None:
+                row["WPA"] = round(ws.get(pid, {}).get("wpa", 0.0), 3)
+            if wpp is not None:
+                row["PossWPA"] = round(wpp.get(pid, {}).get("wpa", 0.0), 3)
+            row["SMOE"] = smoe
+            rows.append(row)
         if rows:
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
                          column_config={
@@ -1113,15 +1130,19 @@ def render_box_score(game_id: int):
         cols = ["#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%", "FT", "FT%",
                 "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF", "+/-",
                 "SC", "eFG%", "TS%", "GS"]
+        roster_all = query(
+            "SELECT id AS pid, name, number, team_id FROM players "
+            "WHERE team_id IN (?,?) ORDER BY number, name", (t1id, t2id))
 
         def make_df(tid):
-            rows = []
+            rows, played = [], set()
             pls = sorted([b for b in boxes.values() if b["team_id"] == tid],
                          key=lambda b: (-b["PTS"], -b["MIN"]))
             for b in pls:
                 if not any([b["FGA"], b["FTA"], b["MIN"], b["TRB"], b["AST"],
                             b["PF"], b["TOV"], b["STL"], b["BLK"]]):
                     continue
+                played.add(_pid_of(b, boxes))
                 rows.append({
                     "#": str(b["number"]), "Player": b["name"], "MIN": b["MIN"], "PTS": b["PTS"],
                     "FG": f"{b['FGM']}-{b['FGA']}", "FG%": round(100*S._safe(b['FGM'],b['FGA']),1),
@@ -1131,6 +1152,16 @@ def render_box_score(game_id: int):
                     "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
                     "+/-": b["PM"], "SC": b["SC"], "eFG%": round(100*S.efg(b),1),
                     "TS%": round(100*S.ts(b),1), "GS": round(S.game_score(b),1)})
+            # DNP — rostered players with nothing recorded this game
+            for p in roster_all:
+                if p["team_id"] != tid or p["pid"] in played:
+                    continue
+                rows.append({
+                    "#": str(p["number"]), "Player": f"{p['name']} (DNP)", "MIN": 0.0,
+                    "PTS": 0, "FG": "0-0", "FG%": 0.0, "3P": "0-0", "3P%": 0.0,
+                    "FT": "0-0", "FT%": 0.0, "ORB": 0, "DRB": 0, "REB": 0, "AST": 0,
+                    "STL": 0, "BLK": 0, "TOV": 0, "PF": 0, "+/-": 0, "SC": 0,
+                    "eFG%": 0.0, "TS%": 0.0, "GS": 0.0})
             tb = _team_total(boxes, tid)
             rows.append({
                 "#": "", "Player": "TOTAL", "MIN": None, "PTS": tb["PTS"],

@@ -1,12 +1,12 @@
 """
-main.py — Executive Dashboard + multipage entry point for APP5.0.
+Main.py — Executive Dashboard + multipage entry point for APP5.0.
 
 The landing page is a best-in-class BI dashboard: a top KPI scorecard row, an
 asymmetric command-center grid (gauges left, hero charts center, ranked
 leaderboards with sparklines right), the Game of the Season, and quick links into
-every tool. Data lives in a local SQLite database (database/analytics.db),
-initialised on startup by database/db.py. Display-only; all math is in the
-Streamlit-free engines.
+every tool. Data lives in a local SQLite database in the per-user data dir
+(path resolved by database/db.py), initialised on startup. Display-only; all
+math is in the Streamlit-free engines.
 """
 import sys
 import streamlit as st
@@ -22,9 +22,11 @@ try:
     if _rows and _rows[0]["value"] == "0":
         _layout = "centered"
 except Exception:
+    # Must stay silent: this runs BEFORE st.set_page_config, and Streamlit
+    # forbids any other st.* call (warning/error) first. Falls back to "wide".
     pass
 
-st.set_page_config(page_title="Analytics Hub", page_icon="", layout=_layout,
+st.set_page_config(page_title="Analytics Hub · APP5", page_icon="🏀", layout=_layout,
                    initial_sidebar_state="expanded")
 
 # ── Global CSS + theme ─────────────────────────────────────────────────────────
@@ -36,6 +38,8 @@ try:
     from helpers.settings_utils import get_all_settings, apply_theme_css
     apply_theme_css(get_all_settings())
 except Exception:
+    # Stay silent: a broken settings row/theme must never block app boot; the
+    # static style.css above already supplies sane :root fallback tokens.
     pass
 
 # ── Login gate (no-op until [auth] is configured in secrets) ────────────────────
@@ -62,7 +66,12 @@ def _dashboard(gender):
     d = {"teams": 0, "tracked": 0, "players": 0, "games_played": 0,
          "scored": {}, "form": {}, "top": None, "hot": None,
          "scorer": None, "leaders": [], "scorer_rows": [], "game": None,
-         "avg_ortg": None, "top_trk": None, "player_avg_ppg": 0}
+         "avg_ortg": None, "top_trk": None, "player_avg_ppg": 0, "errors": []}
+
+    def _fail(section, exc):
+        d["errors"].append(f"{section}: {type(exc).__name__}: {exc}")
+
+    # core ratings — everything else depends on this; bail out if it fails
     try:
         import helpers.team_ratings as TR
         import helpers.league_analytics as LA
@@ -84,15 +93,22 @@ def _dashboard(gender):
         d["top"] = top
         id_of = {id(s): t for t, s in scored.items()}   # value-obj -> team id
         top_tid = id_of.get(id(top))
+    except Exception as e:
+        _fail("Team ratings", e)
+        return d
 
+    try:
         form = LA.team_form_stats(gender=gender)
         d["form"] = form
-        hot_t = max(form, key=lambda t: (form[t]["Momentum"]
-                    if form[t]["Momentum"] is not None else -1), default=None)
-        if hot_t:
-            d["hot"] = (scored.get(hot_t, {}).get("name", "—"),
-                        form[hot_t]["Momentum"], "".join(form[hot_t]["form"][-5:]))
+        hot_t = max((t for t in form if form[t]["Momentum"] is not None),
+                    key=lambda t: form[t]["Momentum"], default=None)
+        if hot_t and hot_t in scored:
+            d["hot"] = (scored[hot_t]["name"], form[hot_t]["Momentum"],
+                        "".join(form[hot_t]["form"][-5:]))
+    except Exception as e:
+        _fail("Team form", e)
 
+    try:
         # leaderboard rows (top 12 by power) with recent margin sparkline
         ptr = LA.per_team_results(gender)
         d["leaders"] = [{
@@ -100,13 +116,19 @@ def _dashboard(gender):
             "Power": s["Power"], "Net": s["AdjNet"],
             "Form": [g["margin"] for g in ptr.get(id_of.get(id(s)), [])[-7:]],
         } for s in order[:12]]
+    except Exception as e:
+        _fail("Power rankings", e)
 
+    try:
         # tracked efficiency for the top team's gauges
         tracked = TR.tracked_ratings(gender=gender)
         if tracked:
             d["avg_ortg"] = sum(t["ORtg"] for t in tracked.values()) / len(tracked)
             d["top_trk"] = tracked.get(top_tid)
+    except Exception as e:
+        _fail("Efficiency gauges", e)
 
+    try:
         # player scoring leaderboard with per-game PTS sparkline
         table = PR.player_stat_table(gender=gender, min_games=1)
         d["players"] = len(table)
@@ -114,7 +136,9 @@ def _dashboard(gender):
             gbox = S.player_game_boxes()
             gdates = {r["id"]: r["date"] for r in query(
                 "SELECT id, date FROM games WHERE tracked=1")}
-            top_sc = sorted(table.values(), key=lambda r: -(r.get("PPG") or 0))[:10]
+            top_sc = sorted(table.values(),
+                            key=lambda r: -(r["PPG"] if r.get("PPG") is not None
+                                            else 0))[:10]
             d["scorer"] = (top_sc[0]["name"], top_sc[0]["team"], top_sc[0].get("PPG"))
             d["player_avg_ppg"] = (sum(r.get("PPG") or 0 for r in table.values())
                                    / len(table))
@@ -130,11 +154,15 @@ def _dashboard(gender):
                              "PPG": r.get("PPG"), "OVR": r.get("OVERALL"),
                              "Trend": series})
             d["scorer_rows"] = rows
+    except Exception as e:
+        _fail("Scoring leaders", e)
 
+    try:
         # game of the season (highest GEI)
         best = None
         for gid in [r["id"] for r in query("SELECT id FROM games WHERE tracked=1")]:
             g = query("""SELECT g.team1_id t1, g.team2_id t2, t1.name n1, t2.name n2,
+                                g.home_score hs, g.away_score aws,
                                 t1.gender gen FROM games g
                          JOIN teams t1 ON t1.id=g.team1_id
                          JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""", (gid,))
@@ -161,10 +189,14 @@ def _dashboard(gender):
                 mc.append((S.elapsed(e["quarter"], e["time"]), h - a))
             gei = WP.game_excitement_index(WP.wp_curve(mc))
             if best is None or gei > best[0]:
-                best = (gei, g["n1"], g["n2"], h, a)
+                # events feed the win-prob curve only; display the official
+                # final from games.home_score/away_score (event fallback)
+                best = (gei, g["n1"], g["n2"],
+                        g["hs"] if g["hs"] is not None else h,
+                        g["aws"] if g["aws"] is not None else a)
         d["game"] = best
-    except Exception:
-        pass
+    except Exception as e:
+        _fail("Game of the season", e)
     return d
 
 
@@ -186,6 +218,12 @@ except Exception:
     pass
 
 D = _dashboard(_gender)
+
+if D.get("errors"):
+    st.warning("Some dashboard data failed to load")
+    with st.expander("Error details"):
+        for _msg in D["errors"]:
+            st.write(f"- {_msg}")
 
 if not D["scored"]:
     st.info("No finished games yet for this league. Log games in the Input Hub and "
@@ -320,7 +358,7 @@ if D["scored"]:
                           label_visibility="collapsed").strip().lower()
         if q:
             pm = sorted([p for p in EX["players"] if q in (p["name"] or "").lower()],
-                        key=lambda p: -(p["ovr"] or 0))[:8]
+                        key=lambda p: -(p["ovr"] if p["ovr"] is not None else 0))[:8]
             tm = sorted([s for s in D["scored"].values()
                          if q in (s["name"] or "").lower()],
                         key=lambda s: s["Rank"])[:8]
@@ -330,8 +368,9 @@ if D["scored"]:
                 if pm:
                     st.dataframe(pd.DataFrame([
                         {"Player": p["name"], "Team": p["team"],
-                         "PPG": round(p["ppg"], 1) if p["ppg"] else None,
-                         "OVR": round(p["ovr"]) if p["ovr"] else None} for p in pm]),
+                         "PPG": round(p["ppg"], 1) if p["ppg"] is not None else None,
+                         "OVR": round(p["ovr"]) if p["ovr"] is not None else None}
+                        for p in pm]),
                         hide_index=True, width="stretch")
                 else:
                     st.caption("No players match.")
@@ -401,11 +440,3 @@ st.caption("Plan & scout")
 _links([("pages/9_War_Room.py", "War Room", ""),
         ("pages/8_Officials.py", "Officials", ""),
         ("pages/12_Settings.py", "Settings", "")])
-
-try:
-    from database.db import get_db_path as _gp
-    _p = _gp()
-    st.caption(f"Database ready ({_p.name})" if _p.exists()
-               else "Database file not found — run the app once to initialise it.")
-except Exception as _e:
-    st.warning(f"Database error — {_e}")

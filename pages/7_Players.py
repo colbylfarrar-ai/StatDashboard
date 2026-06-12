@@ -51,7 +51,7 @@ import helpers.fouls as FL
 import helpers.reports as RP
 import helpers.manual_box as MB
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Players")
 RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 
 # Accent-tinted card glows (accent is dynamic, so these stay page-local). The
@@ -223,7 +223,6 @@ def _leader_bar(top, key, fmt, color=ACCENT, height=200):
 
 def _podium(top3, key, fmt):
     """Gold/silver/bronze top-3 cards for a stat."""
-    icons = ["", "", ""]
     styles = [("#f0a500", "#3a2a00"), ("#adb5bd", "#1e2229"),
               ("#cd7f32", "#271505")]
     cols = st.columns(min(3, len(top3)) or 1)
@@ -233,7 +232,6 @@ def _podium(top3, key, fmt):
             f"<div style='background:linear-gradient(135deg,{bg},#0d1117);"
             f"border:1px solid {c};border-radius:12px;padding:14px;"
             f"text-align:center'>"
-            f"<div style='font-size:26px'>{icons[i]}</div>"
             f"<div style='font-size:15px;font-weight:800;color:#f0f6fc;"
             f"margin-top:4px'>{r['name']}</div>"
             f"<div style='font-size:11px;color:#8b949e'>"
@@ -401,7 +399,6 @@ with tab_lead:
         f"<div style='background:linear-gradient(135deg,#1a0d2e 0%,#0d1117 100%);"
         f"border:2px solid {hue};border-radius:16px;padding:20px 26px;"
         f"margin-bottom:16px;display:flex;align-items:center;gap:22px'>"
-        f"<div style='font-size:40px'></div>"
         f"<div style='flex:1'>"
         f"<div style='font-size:10px;color:{hue};text-transform:uppercase;"
         f"letter-spacing:1.5px;font-weight:700'>Overall rating leader · {tier}</div>"
@@ -1031,6 +1028,8 @@ def _fx_cmp():
             ("REBOUNDING", "f1", True), ("2WAY", "f1", True),
             ("VERSATILITY", "f1", True),
         ]
+        # display labels from STAT_GROUPS so raw keys like "PTSsd" read nicely
+        _stat_lbl = {k: lbl for _, _grp in STAT_GROUPS for k, lbl, *_rest in _grp}
         cmp_rows = []
         for key, fmt, higher in CMP_STATS:
             va, vb = A.get(key), B.get(key)
@@ -1038,7 +1037,8 @@ def _fx_cmp():
             if va is not None and vb is not None and va != vb:
                 a_better = (va > vb) if higher else (va < vb)
                 edge = "◀ A" if a_better else "B ▶"
-            cmp_rows.append({"Stat": key, A["name"]: _fmt(va, fmt),
+            cmp_rows.append({"Stat": _stat_lbl.get(key, key),
+                             A["name"]: _fmt(va, fmt),
                              "Edge": edge, B["name"]: _fmt(vb, fmt)})
         st.dataframe(pd.DataFrame(cmp_rows), hide_index=True,
                      width="stretch",
@@ -1403,8 +1403,9 @@ def _fx_prof():
             ",".join("?" * len(gids)) or "NULL"), tuple(gids)) if gids else []
     name_of = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
     log = []
+    _boxes = _pgb().get(pid, {})
     for g in sorted(games, key=lambda x: x["date"]):
-        b = S.aggregate_player_boxes(game_ids=[g["id"]]).get(pid)
+        b = _boxes.get(g["id"])
         if not b:
             continue
         opp = g["team2_id"] if g["team1_id"] == P["team_id"] else g["team1_id"]
@@ -1645,48 +1646,48 @@ def _fx_prof():
     OVR = P["OVERALL"] or 0
 
     if OVR >= 65 and DEF >= 60:
-        arch = ("", "Two-Way Force",
+        arch = ("Two-Way Force",
                 "Produces on offense and disrupts on defense — a rare both-ends impact.")
     elif OFF >= 62 and pc("PPG") >= 80:
-        arch = ("", "Scoring Machine",
+        arch = ("Scoring Machine",
                 "A primary offensive weapon who creates and converts at volume.")
     elif PLY >= 62 and pc("APG") >= 80:
-        arch = ("", "Floor General",
+        arch = ("Floor General",
                 "Runs the offense through vision and distribution.")
     elif REB_R >= 62 or pc("REB") >= 85:
-        arch = ("", "Glass Cleaner",
+        arch = ("Glass Cleaner",
                 "Owns the boards and generates extra possessions.")
     elif DEF >= 62 or pc("STOCKS") >= 85:
-        arch = ("", "Defensive Anchor",
+        arch = ("Defensive Anchor",
                 "Disrupts opponents with steals, blocks, and contests.")
     elif pc("3P%") >= 70 and P["3PA"] >= 15 and pc("DSHOT%", True) >= 55:
-        arch = ("", "3-and-D Wing",
+        arch = ("3-and-D Wing",
                 "Spaces the floor and holds up defensively — a valuable role.")
     elif pc("3P%") >= 70 and P["3PA"] >= 20:
-        arch = ("", "Spot-Up Shooter",
+        arch = ("Spot-Up Shooter",
                 "An off-ball threat who punishes help defense from deep.")
     elif pc("Paint%") >= 70 and pc("REB") >= 60:
-        arch = ("", "Interior Presence",
+        arch = ("Interior Presence",
                 "Finishes inside efficiently and commands the paint.")
     elif OVR >= 56:
-        arch = ("", "Versatile Contributor",
+        arch = ("Versatile Contributor",
                 "Well-rounded across the board without one dominant trait.")
     elif pc("+/-") >= 75:
-        arch = ("", "High-Impact Role Player",
+        arch = ("High-Impact Role Player",
                 "The team plays better with them on the floor.")
     else:
-        arch = ("", "Developing Player",
+        arch = ("Developing Player",
                 "Still building their game — more tracked games will sharpen it.")
 
     st.markdown(
         f"<div style='background:linear-gradient(135deg,#1a1200,#0d1117);"
         f"border:1px solid {ACCENT};border-radius:12px;padding:14px 18px;"
         f"margin-bottom:14px;display:flex;align-items:center;gap:14px'>"
-        f"<span style='font-size:32px'>{arch[0]}</span><div>"
+        f"<div>"
         f"<div style='font-size:10px;font-weight:700;letter-spacing:.08em;"
         f"color:#8b949e;text-transform:uppercase'>Scouting role</div>"
-        f"<div style='font-size:15px;font-weight:800;color:{ACCENT}'>{arch[1]}</div>"
-        f"<div style='font-size:12px;color:#8b949e;margin-top:3px'>{arch[2]}</div>"
+        f"<div style='font-size:15px;font-weight:800;color:{ACCENT}'>{arch[0]}</div>"
+        f"<div style='font-size:12px;color:#8b949e;margin-top:3px'>{arch[1]}</div>"
         f"</div></div>", unsafe_allow_html=True)
 
     strengths, weaknesses = [], []

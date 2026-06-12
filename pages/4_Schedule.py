@@ -1,5 +1,5 @@
 """
-3_Schedule.py — Calendar-style, one-stop view of every game day.
+4_Schedule.py — Calendar-style, one-stop view of every game day.
 
 Pick a month, click a day on the calendar, and the page unfolds everything that
 happened: a day-at-a-glance summary, the Game of the Day, the biggest upset,
@@ -26,7 +26,7 @@ from helpers.ui import page_chrome, score_card, team_color, empty_state
 import helpers.team_ratings as TR
 import helpers.stats as S
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Schedule")
 
 
 def _film_widget(url):
@@ -271,6 +271,14 @@ c[1].metric("Avg team score", f"{avg_score:.1f}" if scored else "—")
 c[2].metric("Largest margin", str(largest_mov) if scored else "—")
 c[3].metric("Tracked", str(len(tracked_games)))
 
+# ── Scheduled day — games on the calendar, but nothing played yet ──────────────
+if not scored:
+    st.markdown("<div class='section-hdr'>Scheduled — not played yet</div>",
+                unsafe_allow_html=True)
+    for g in day_games:
+        st.markdown(f"- **{g['t2']}** @ **{g['t1']}** · {_fmt_long(g['date'])}")
+    st.stop()
+
 # ── Game of the Day ─────────────────────────────────────────────────────────────
 st.markdown("<div class='section-hdr'>Game of the Day</div>",
             unsafe_allow_html=True)
@@ -295,14 +303,14 @@ if scored:
             <div style="font-size:16px;font-weight:700;color:#c9d1d9">
               {'▸ ' if not h_win else ''}{gotd['t2']}</div>
             <div style="font-size:46px;font-weight:900;line-height:1;
-                 color:{c_away if not h_win else '#555d68'}">{as_}</div>
+                 color:{c_away if not h_win else '#8b949e'}">{as_}</div>
           </td>
           <td style="width:16%;text-align:center;color:#8b949e;font-size:18px">@</td>
           <td style="width:42%;text-align:center">
             <div style="font-size:16px;font-weight:700;color:#c9d1d9">
               {'▸ ' if h_win else ''}{gotd['t1']}</div>
             <div style="font-size:46px;font-weight:900;line-height:1;
-                 color:{c_home if h_win else '#555d68'}">{hs}</div>
+                 color:{c_home if h_win else '#8b949e'}">{hs}</div>
           </td>
         </tr></table>
         {badge}

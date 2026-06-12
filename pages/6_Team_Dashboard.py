@@ -1,5 +1,5 @@
 """
-5_Team_Dashboard.py — the single-team deep dive.
+6_Team_Dashboard.py — the single-team deep dive.
 
 Pick one team and read everything about it across these tabs:
 
@@ -67,7 +67,7 @@ import helpers.fouls as FL
 import helpers.manual_box as MB
 import helpers.scoutboard as SB
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Team Dashboard")
 GOOD = "#3fb950"
 BAD = "#e74c3c"
 BLUE = "#58a6ff"
@@ -703,6 +703,12 @@ def _pp_zone_tables():
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _pgb():
+    """Every player's per-game boxes over all tracked games (keyed by pid → gid)."""
+    return S.player_game_boxes()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _playtype_view(g, tid, offense):
     """Synergy-style play-type table for one team, ranked vs the league pool."""
     return PT.team_playtype_percentiles(tid, gender=g, offense=offense)
@@ -799,12 +805,13 @@ def _fx_over():
         _seg = " · ".join(f"**{k}** {v[0]}-{v[1]}"
                           for k, v in sorted(_bytype.items()))
         st.caption(f"Record by game type — {_seg}  "
-                   f"<span style='color:#8b949e'>(set types on Setup)</span>")
+                   f"<span style='color:#8b949e'>(set types on Setup)</span>",
+                   unsafe_allow_html=True)
 
     m = st.columns(5)
     m[0].metric("Power", sc_score.get("Power", "—"),
                 help="Results-only 0-100 power rating (50 = league avg).")
-    m[1].metric("Everything rank", f"#{sc_score.get('Rank', '—')} of {len(scored)}",
+    m[1].metric("League rank", f"#{sc_score.get('Rank', '—')} of {len(scored)}",
                 help="Results-only Score ranking across every team in the league.")
     m[2].metric("Record", f"{rec['wins']}-{rec['losses']}")
     m[3].metric("Margin / game", f"{rec['MOV']:+.1f}")
@@ -827,12 +834,10 @@ def _fx_over():
 
     _w10, _l10 = _rec_vs(_top10)
     _w25, _l25 = _rec_vs(_top25)
-    vr = st.columns(3)
-    vr[0].metric("Overall rank", f"#{sc_score.get('Rank', '—')} of {len(scored)}",
-                 help="Results-only Score ranking across the league.")
-    vr[1].metric("vs Top 10", f"{_w10}-{_l10}",
+    vr = st.columns(2)
+    vr[0].metric("vs Top 10", f"{_w10}-{_l10}",
                  help="Record vs the top-10 teams by Score ranking.")
-    vr[2].metric("vs Top 25", f"{_w25}-{_l25}",
+    vr[1].metric("vs Top 25", f"{_w25}-{_l25}",
                  help="Record vs the top-25 teams by Score ranking.")
 
     if has_tracked:
@@ -1705,11 +1710,12 @@ with tab_charts:
                            "tracked games.")
 
     if not has_tracked:
-        with ch_sc:
-            empty_state("No tracked games yet",
-                        "The analytics wall is built from play-by-play. Track a game "
-                        "in the Game Tracker to light up scoring, shooting, defense, "
-                        "play types and the rest.", icon="📊")
+        for _ch in (ch_sc, ch_sh, ch_rb, ch_df, ch_tr):
+            with _ch:
+                empty_state("No tracked games yet",
+                            "The analytics wall is built from play-by-play. Track a "
+                            "game in the Game Tracker to light up scoring, shooting, "
+                            "defense, play types and the rest.", icon="📊")
     else:
         st.caption("The analytics wall — built from tracked-game events. Small "
                    "samples are directional.")
@@ -5239,8 +5245,9 @@ def _render_profile(P, pid, rows, zsplits, zguard):
             ",".join("?" * len(gids)) or "NULL"), tuple(gids)) if gids else []
     name_of = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
     plog = []
+    _boxes = _pgb().get(pid, {})
     for g in sorted(games, key=lambda x: x["date"]):
-        b = S.aggregate_player_boxes(game_ids=[g["id"]]).get(pid)
+        b = _boxes.get(g["id"])
         if not b:
             continue
         opp = g["team2_id"] if g["team1_id"] == P["team_id"] else g["team1_id"]

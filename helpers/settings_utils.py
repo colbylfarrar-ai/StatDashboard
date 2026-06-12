@@ -115,19 +115,20 @@ def get_all_settings() -> dict:
 #  THEME CSS INJECTION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def apply_page_config(settings: dict = None) -> None:
+def apply_page_config(settings: dict = None, title: str = None) -> None:
     """
     Call st.set_page_config based on stored settings.
     Must be the first st.* call on the page — call before apply_theme_css.
     Safe to call even if APP.py already called set_page_config (exception is swallowed).
+    `title` sets the browser-tab title ("<title> · APP5"); default stays the hub name.
     """
     if settings is None:
         settings = get_all_settings()
     wide = settings.get("wide_mode", DEFAULTS["wide_mode"]) == "1"
     try:
         st.set_page_config(
-            page_title="Analytics Hub",
-            page_icon="",
+            page_title=f"{title} · APP5" if title else "Analytics Hub · APP5",
+            page_icon="🏀",
             layout="wide" if wide else "centered",
             initial_sidebar_state="expanded",
         )

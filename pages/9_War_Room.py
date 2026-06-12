@@ -36,7 +36,7 @@ import helpers.lineups as LU
 import helpers.team_analytics as TA
 from database.db import query
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("War Room")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -165,12 +165,13 @@ with tab_match:
     ta = pc[0].selectbox("Team A", order, index=0, format_func=_pfmt, key="wr_a")
     tb = pc[1].selectbox("Team B", order, index=min(1, len(order) - 1),
                          format_func=_pfmt, key="wr_b")
-    homep = pc[2].radio("Home court", ["Neutral", "Team A", "Team B"], key="wr_home")
+    homep = pc[2].radio("Home court", ["Neutral", name_of[ta], name_of[tb]],
+                        key="wr_home")
 
     if ta == tb:
         st.info("Pick two different teams.")
     else:
-        home_arg = ta if homep == "Team A" else (tb if homep == "Team B" else None)
+        home_arg = ta if homep == name_of[ta] else (tb if homep == name_of[tb] else None)
         pred = PRED.predict_game(ta, tb, scored=scored, tracked=tracked,
                                  gender=gender, home=home_arg)
         if not pred:
@@ -385,8 +386,7 @@ with tab_bracket:
                 df, hide_index=True, width="stretch", key="wr_brk_tbl",
                 column_config={
                     "Champ %": st.column_config.ProgressColumn(
-                        "Champ %", format="%.1f", min_value=0,
-                        max_value=float(max(d["champ_pct"] for d in res) or 1))})
+                        "Champ %", format="%.1f%%", min_value=0, max_value=100)})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

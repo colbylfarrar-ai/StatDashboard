@@ -1,5 +1,5 @@
 """
-4_Rankings.py — the league-wide view: team rankings, deep dives and charts.
+5_Rankings.py — the league-wide view: team rankings, deep dives and charts.
 
 League-wide tabs:
   • Overview    — the source of truth. Results-only "Score" power ratings for
@@ -14,7 +14,7 @@ League-wide tabs:
                   volume — built from tracked-game events. A team filter takes
                   teams out of the graphs and a per-stat bar gallery covers the
                   headline team stats.
-  • Everything  — futuristic league-wide analytics over every team (landscape,
+  • League      — futuristic league-wide analytics over every team (landscape,
                   tiers, Pythagoras, momentum, win network). The whole-league
                   companion to the Tracked tab. (Matchup predictions + sims now
                   live on the War Room page.)
@@ -44,7 +44,7 @@ import helpers.team_analytics as TA
 import helpers.stats as S
 import helpers.league_analytics as LA
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Rankings")
 
 # futuristic-lab palette (mirrors the Team Analytics advanced layer)
 GOOD = "#3fb950"
@@ -56,6 +56,13 @@ GREY = "#8b949e"
 PINK = "#ff5db1"
 GOLD = "#f0a500"
 TIER_PALETTE = ["#00e5ff", "#3fb950", "#58a6ff", "#f0a500", "#8b949e"]
+
+# tier ladder — single source for _tier() and the Power-tiers caption
+TIER_CUTS = [("S · ELITE", 70, "#00e5ff"),
+             ("A · CONTENDER", 62, "#3fb950"),
+             ("B · SOLID", 54, "#58a6ff"),
+             ("C · MIDDLING", 46, "#f0a500")]
+TIER_FLOOR = ("D · REBUILDING", "#e74c3c")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -132,20 +139,15 @@ def _lab_hdr(text):
 def _tier(power):
     """Power 0-100 → (tier name, color). 50 = league average on the z-scale.
 
-    Band edges (70/62/54/46) match the player OVERALL ladder (helpers.cards.tier)
+    Band edges (TIER_CUTS) match the player OVERALL ladder (helpers.cards.tier)
     so "elite/great/above-average/average" mean the same number on both scales.
     """
     if power is None:
         return "—", GREY
-    if power >= 70:
-        return "S · ELITE", "#00e5ff"
-    if power >= 62:
-        return "A · CONTENDER", "#3fb950"
-    if power >= 54:
-        return "B · SOLID", "#58a6ff"
-    if power >= 46:
-        return "C · MIDDLING", "#f0a500"
-    return "D · REBUILDING", "#e74c3c"
+    for name, cut, clr in TIER_CUTS:
+        if power >= cut:
+            return name, clr
+    return TIER_FLOOR
 
 
 def _pctile_color(pct):
@@ -291,7 +293,7 @@ pack = _tracked_pack(gender, tracked)
 (tab_over, tab_team, tab_cmp, tab_track, tab_chart, tab_evr,
  tab_gloss) = st.tabs(
     ["Overview", "Team", "Compare", "Tracked", "Team Charts",
-     "Everything", "Glossary"])
+     "League", "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -536,7 +538,7 @@ with tab_over:
 with tab_team:
     st.caption("One team, every angle — pick a team for its record, résumé "
                "splits, composites, league percentile profile and full schedule. "
-               "Both the everything ranking and (where tracked) the possession "
+               "Both the league ranking and (where tracked) the possession "
                "ranking are shown together.")
 
     # ── Team deep dive ───────────────────────────────────────────────────────
@@ -571,11 +573,11 @@ with tab_team:
     m[3].metric("Margin / game", f"{r['MOV']:+.1f}")
     m[4].metric("SOS / SOR", f"{r['SOS']:.1f} / {r['SOR']:.1f}")
 
-    # both rankings in one place: everything (this tab) + tracked (where possible)
+    # both rankings in one place: league (this tab) + tracked (where possible)
     rk = TR.team_rank(pick, scored=scored, tracked=tracked)
     _trk = rk["tracked"]
     st.caption(
-        f"**Everything ranking** #{r['Rank']} of {len(scored)}  ·  "
+        f"**League ranking** #{r['Rank']} of {len(scored)}  ·  "
         + (f"**Tracked ranking** #{_trk['rank']} of {_trk['of']} "
            f"(Power {_trk['power']}, Net {_trk['netrtg']:+.1f})"
            if _trk else "**Tracked ranking** — not tracked yet"))
@@ -677,6 +679,7 @@ with tab_team:
             """SELECT date, opponent_id, home_away, location
                FROM schedule
                WHERE team_id=? AND (opp_score IS NULL OR team_score IS NULL)
+                 AND date >= date('now', 'localtime')
                ORDER BY date""", (pick,))
         if upcoming:
             st.markdown("**Upcoming**")
@@ -894,9 +897,9 @@ with tab_over:
     # ── Hot & cold (current streaks across the league) ───────────────────────
     streaks = []
     for tid in scored:
-        s = _team_streak(_team_results(tid))
-        if s and len(s) > 1:
-            streaks.append((tid, s[0], int(s[1:])))
+        f = form_stats.get(tid)
+        if f and f.get("streak_type") and f.get("streak_len"):
+            streaks.append((tid, f["streak_type"], int(f["streak_len"])))
     if streaks:
         st.markdown("<div class='section-hdr'>Hot &amp; cold</div>",
                     unsafe_allow_html=True)
@@ -910,7 +913,7 @@ with tab_over:
             for tid, _, n in hot:
                 st.markdown(
                     f"**{name_of[tid]}** `{class_of[tid]}`  "
-                    f"<span style='color:#2ecc71;font-weight:700'>W{n}</span>  "
+                    f"<span style='color:{GOOD};font-weight:700'>W{n}</span>  "
                     f"({scored[tid]['W']}-{scored[tid]['L']})",
                     unsafe_allow_html=True)
         with hc2:
@@ -963,11 +966,13 @@ def _fx_track():
                     "PPP": st.column_config.NumberColumn("PPP", format="%.3f"),
                     "oPPP": st.column_config.NumberColumn("Opp PPP", format="%.3f"),
                     "Pace": st.column_config.NumberColumn("Pace", format="%.1f"),
-                    "eFG": st.column_config.NumberColumn("eFG%", format="%.3f"),
-                    "oeFG": st.column_config.NumberColumn("Opp eFG%", format="%.3f"),
-                    "FGpct": st.column_config.NumberColumn("FG%", format="%.3f"),
-                    "oFGpct": st.column_config.NumberColumn("Opp FG%", format="%.3f"),
-                    "TPpct": st.column_config.NumberColumn("3P%", format="%.3f"),
+                    "eFG": st.column_config.NumberColumn("eFG%", format="percent"),
+                    "oeFG": st.column_config.NumberColumn("Opp eFG%",
+                                                          format="percent"),
+                    "FGpct": st.column_config.NumberColumn("FG%", format="percent"),
+                    "oFGpct": st.column_config.NumberColumn("Opp FG%",
+                                                            format="percent"),
+                    "TPpct": st.column_config.NumberColumn("3P%", format="percent"),
                     "SOS": st.column_config.NumberColumn("SOS", format="%.2f"),
                     "SOR": st.column_config.NumberColumn("SOR", format="%.2f"),
                     "ClassAdj": st.column_config.NumberColumn(
@@ -1018,7 +1023,7 @@ def _fx_chart():
 
         # per-team advanced bundle — the single shared box pass from
         # helpers/league_analytics.team_tracked_pack (computed once, cached, and
-        # reused by the Everything tab). `ts[t]` carries the
+        # reused by the League tab). `ts[t]` carries the
         # derived keys this tab used inline, plus extras; 3P% is "TPpct".
         all_teams = pack["teams"]
         own, opp, gp, ts = pack["own"], pack["opp"], pack["gp"], pack["ts"]
@@ -1026,7 +1031,7 @@ def _fx_chart():
 
         # ── team filter — drives every chart on this tab ─────────────────────
         _csel = st.multiselect(
-            "Teams to show", all_teams, default=all_teams,
+            "Teams to show (empty = all)", all_teams, default=[],
             format_func=lambda t: name_of.get(t, str(t)), key="chart_team_filter")
         teams = [t for t in all_teams if t in set(_csel)] or all_teams
         labels = [name_of.get(t, str(t)) for t in teams]
@@ -1470,7 +1475,9 @@ def _fx_evr():
     with lab_tier:
         _lab_hdr("Power tiers")
         st.caption("Teams bucketed by Power (0-100, 50 = league average). "
-                   "S ≥ 68 · A ≥ 60 · B ≥ 52 · C ≥ 44 · D < 44.")
+                   + " · ".join(f"{name.split(' ')[0]} ≥ {cut:g}"
+                                for name, cut, _ in TIER_CUTS)
+                   + f" · {TIER_FLOOR[0].split(' ')[0]} < {TIER_CUTS[-1][1]:g}.")
         tier_order = ["S · ELITE", "A · CONTENDER", "B · SOLID",
                       "C · MIDDLING", "D · REBUILDING"]
         buckets = defaultdict(list)
@@ -1819,8 +1826,8 @@ with tab_cmp:
                 bw = (not neutral) and ((b > a) if hib else (b < a))
             except TypeError:
                 aw = bw = False
-            ca = "color:#2ea043;font-weight:800" if aw else "color:#c9d1d9"
-            cb = "color:#2ea043;font-weight:800" if bw else "color:#c9d1d9"
+            ca = f"color:{GOOD};font-weight:800" if aw else "color:#c9d1d9"
+            cb = f"color:{GOOD};font-weight:800" if bw else "color:#c9d1d9"
             av = fmt.format(a) if a is not None else "—"
             bv = fmt.format(b) if b is not None else "—"
             return (f"<tr><td style='text-align:right;padding:4px 10px;{ca}'>{av}</td>"

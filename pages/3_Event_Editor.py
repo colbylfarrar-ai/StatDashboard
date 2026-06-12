@@ -21,7 +21,7 @@ import streamlit as st
 from helpers.ui import page_chrome, empty_state
 import helpers.event_log as EL
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Event Editor")
 
 st.title("Event Editor")
 st.caption("Correct or delete any logged play-by-play event. Edits re-derive +/- "

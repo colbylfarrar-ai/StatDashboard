@@ -16,6 +16,7 @@ Page usage:
 """
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 
@@ -69,18 +70,18 @@ def _sync_external_writes():
 
 
 # ── Page boot ───────────────────────────────────────────────────────────────────
-def page_chrome():
+def page_chrome(title: str = None):
     """Standard page boot, returning ``(settings_dict, accent_hex)``.
 
     Runs DB init, applies the stored page config + theme, and injects the global
     stylesheet. ``apply_page_config`` is the first ``st.*`` call (Streamlit
     requires set_page_config to come first), so call this before any other
-    ``st.*`` on the page.
+    ``st.*`` on the page. ``title`` names the browser tab per page.
     """
     initialize_database()
     _sync_external_writes()
     cfg = get_all_settings()
-    apply_page_config(cfg)
+    apply_page_config(cfg, title)
     if _CSS_PATH.exists():
         st.markdown(
             f"<style>{_CSS_PATH.read_text(encoding='utf-8')}</style>",
@@ -139,7 +140,7 @@ def score_card(rows, *, footer="", footer_top=False, style_names=False):
         ncls = f" {cls}" if style_names else ""
         body += (
             "<div style='display:flex;justify-content:space-between;align-items:center'>"
-            f"<span class='score-card-team{ncls}'>{name}</span>"
+            f"<span class='score-card-team{ncls}'>{html.escape(str(name))}</span>"
             f"<span class='score-card-pts {cls}'>{pts}</span></div>")
     foot = f"<div class='score-card-date'>{footer}</div>" if footer else ""
     inner = (foot + body) if footer_top else (body + foot)
@@ -264,18 +265,22 @@ def chart(fig, *, data=None, key=None, export=("CSV",)):
 
 
 # ── Empty state / loading ───────────────────────────────────────────────────────
-def empty_state(title, body="", *, icon="🏀", cta=None):
+def empty_state(title, body="", *, icon="🏀", cta=None, page=None):
     """Branded empty-state card — the polished replacement for a bare ``st.info``.
 
     Use on any tab/section that has no data yet (e.g. an untracked team). Accent
     and theming come from the global ``.empty-state`` CSS (assets/style.css), so
-    it restyles with the chosen theme. ``cta`` is an optional next-step line."""
-    cta_html = f"<div class='empty-state-cta'>{cta}</div>" if cta else ""
+    it restyles with the chosen theme. ``cta`` is an optional next-step line;
+    pass ``page`` (an ``st.page_link`` target, e.g. ``"pages/1_Input_Hub.py"``)
+    to render the CTA as a real clickable link instead of the static pill."""
+    cta_html = f"<div class='empty-state-cta'>{cta}</div>" if cta and not page else ""
     st.markdown(
         f"<div class='empty-state'><div class='empty-state-icon'>{icon}</div>"
         f"<div class='empty-state-title'>{title}</div>"
         f"<div class='empty-state-body'>{body}</div>{cta_html}</div>",
         unsafe_allow_html=True)
+    if page:
+        st.page_link(page, label=cta or "Open")
 
 
 def loading(msg="Crunching the numbers…"):

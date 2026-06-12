@@ -21,11 +21,12 @@ from helpers.settings_utils import (
 from helpers.ui import page_chrome, team_color
 import helpers.auth as AUTH
 
-_cfg, _ = page_chrome()
+_cfg, _ = page_chrome("Settings")
 
 
 st.title("Settings")
-st.caption("Changes are saved immediately. Reload other pages to see them applied.")
+st.caption("Changes are saved immediately — other pages pick them up automatically "
+           "the next time they load.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -160,10 +161,12 @@ _me = AUTH.current_user()
 
 if not AUTH.auth_enabled():
     st.info(
-        "Login is **off** — the app runs in open local mode. To require "
-        "sign-in (needed before exposing the app to other coaches), copy "
-        "`.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and "
-        "fill in the Google OAuth credentials — see `AUTH_SETUP.md`.")
+        "Sign-in is currently **off** — anyone who can reach this app can use "
+        "it. That's fine while it runs only on your own computer, but turn "
+        "sign-in on before sharing it with other coaches. Setup instructions "
+        "for the app owner: copy `.streamlit/secrets.toml.example` to "
+        "`.streamlit/secrets.toml`, fill in the Google OAuth credentials, and "
+        "see `AUTH_SETUP.md`.")
 elif _me["role"] != "admin":
     st.caption(f"Signed in as **{_me['email']}** ({_me['role']}). "
                "Only the admin can manage users.")

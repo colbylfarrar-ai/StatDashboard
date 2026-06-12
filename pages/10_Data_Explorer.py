@@ -1,5 +1,5 @@
 """
-12_Data_Explorer.py — a self-serve analytics playground over every stat the app
+10_Data_Explorer.py — a self-serve analytics playground over every stat the app
 computes. Built for the data-hungry: filter the full ~60-column player table,
 plot any stat against any other (with an OLS trendline), see the league mapped
 into 2D style-space (PCA) coloured by learned archetype, and read a correlation
@@ -25,7 +25,7 @@ import helpers.archetypes as AR
 import helpers.stats as S
 import helpers.court as court
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Data Explorer")
 
 st.title("Data Explorer")
 st.caption("Every stat, your way — filter the full table, build any scatter, map "
@@ -130,8 +130,9 @@ with t_scatter:
         kw["trendline_color_override"] = "#8b949e"
     try:
         fig = px.scatter(sub, **kw)
-    except Exception:
-        kw.pop("size", None)
+    except Exception as e:
+        if kw.pop("size", None) is not None:
+            st.caption(f"Size ignored: {e}")
         fig = px.scatter(sub, **kw)
     fig.update_traces(marker=dict(line=dict(width=0)),
                       selector=dict(mode="markers"))
@@ -179,8 +180,7 @@ with t_corr:
         corr = df[pick].corr()
         fig = px.imshow(corr, text_auto=".2f", color_continuous_scale="RdBu_r",
                         zmin=-1, zmax=1, aspect="auto")
-        fig.update_layout(height=max(360, 34 * len(pick)),
-                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        _style(fig, max(360, 34 * len(pick)))
         _chart(fig, data=corr.reset_index(), key="dx_corr")
         st.caption("Pearson correlation across the player pool. Deep red = strong "
                    "positive, deep blue = strong negative. Use it to spot which "

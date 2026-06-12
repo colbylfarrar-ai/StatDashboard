@@ -48,7 +48,12 @@ def _snapshot_and_apply_pm(game_id, event_id, on_court, on_officials,
                            scoring_team_id=None, pts: int = 0):
     """Snapshot the floor into game_event_lineup, ensure everyone has a
     game_lineup_players row, credit +/- on scoring events, record officials."""
+    # Dedupe by player — a pid listed twice would be credited +/- twice
+    # (permanent stat corruption). Keep the first (pid, tid) per player.
+    deduped: dict = {}
     for pid, tid in on_court:
+        deduped.setdefault(pid, tid)
+    for pid, tid in deduped.items():
         execute("INSERT OR IGNORE INTO game_event_lineup (event_id, player_id, team_id) VALUES (?,?,?)",
                 (event_id, pid, tid))
         execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) VALUES (?,?,?)",

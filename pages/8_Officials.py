@@ -1,5 +1,5 @@
 """
-6_Officials.py — the officials hub.
+8_Officials.py — the officials hub.
 
 Three tabs, all reading from one engine call (helpers/officials.official_overview):
 
@@ -36,7 +36,7 @@ from helpers.cards import team_short as _team_short, fmt as _fmt, bar_h
 from helpers.glossary import glossary_tab
 import helpers.officials as OFF
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Officials")
 HOME = ACCENT
 _AR, _AG, _AB = _rgb(ACCENT)
 _ARGB = f"{_AR},{_AG},{_AB}"
@@ -129,6 +129,11 @@ def _quadrant(rows, xk, yk, xlab, ylab, xfmt, yfmt, color="#bc8cff", qmin=1):
 @st.cache_data(ttl=600, show_spinner=False)
 def _official_overview(g):
     return OFF.official_overview(gender=g)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _official_game_log(off_pk, g):
+    return OFF.official_game_log(off_pk, gender=g)
 
 
 hc1, hc2 = st.columns([3, 1])
@@ -559,7 +564,7 @@ with tab_ind:
         else:
             st.caption("No home/away-attributable fouls.")
 
-    log = OFF.official_game_log(r["off_pk"], gender=gender)
+    log = _official_game_log(r["off_pk"], gender)
 
     # ── Foul-rate trend over time ─────────────────────────────────────────────
     if len(log) >= 2:
@@ -589,7 +594,7 @@ with tab_ind:
             "Date": g["date"], "Matchup": g["matchup"],
             "Score": (f"{g['home_score']}-{g['away_score']}"
                       if g["home_score"] is not None else "—"),
-            "His fouls": g["fouls"], "Game fouls": g["game_fouls"],
+            "Ref fouls": g["fouls"], "Game fouls": g["game_fouls"],
             "POSS": round(g["poss"], 1), "PPP": round(g["ppp"], 3),
         } for g in log])
         st.dataframe(log_df, hide_index=True, width="stretch",

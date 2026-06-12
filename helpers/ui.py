@@ -87,6 +87,8 @@ def page_chrome():
             unsafe_allow_html=True,
         )
     apply_theme_css(cfg)
+    from helpers.auth import require_login
+    require_login()
     return cfg, get_setting("accent_color", "#f0a500")
 
 

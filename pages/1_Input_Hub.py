@@ -11,6 +11,9 @@ initialize_database()
 _cfg = get_all_settings()
 apply_page_config(_cfg)
 
+from helpers.auth import require_login
+require_login()
+
 st.title("Input Hub")
 
 CLASS_OPTIONS  = ["B2", "B1", "A", "2A", "3A", "4A", "5A", "6A", "N/A"]

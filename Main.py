@@ -38,6 +38,10 @@ try:
 except Exception:
     pass
 
+# ── Login gate (no-op until [auth] is configured in secrets) ────────────────────
+from helpers.auth import require_login
+require_login()
+
 import pandas as pd
 import plotly.graph_objects as go
 from helpers.ui import (style_fig as _style, gauge as _gauge, GOOD, BAD)

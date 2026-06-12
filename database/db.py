@@ -198,6 +198,16 @@ def initialize_database():
                )""",
             "CREATE INDEX IF NOT EXISTS idx_mpb_game ON manual_player_box(game_id)",
             "CREATE INDEX IF NOT EXISTS idx_mpb_team ON manual_player_box(team_id)",
+            # Login allowlist for st.login (helpers/auth.py). Roles, not auth:
+            # Google/OIDC proves who you are; this table says what you may do.
+            """CREATE TABLE IF NOT EXISTS app_users (
+                   email    TEXT PRIMARY KEY,
+                   role     TEXT NOT NULL DEFAULT 'coach'
+                            CHECK(role IN ('admin','coach')),
+                   name     TEXT NOT NULL DEFAULT '',
+                   added_by TEXT NOT NULL DEFAULT '',
+                   added_at TEXT NOT NULL DEFAULT (datetime('now'))
+               )""",
             # Scouting: per-team game-plan notes. (The play-drawing board was
             # dropped — streamlit-drawable-canvas is incompatible with Streamlit
             # 1.53 — so scout_plays is removed.)

@@ -19,6 +19,7 @@ from helpers.settings_utils import (
     set_setting, get_setting, ACCENT_PRESETS, STYLE_PRESETS, DEFAULTS,
 )
 from helpers.ui import page_chrome, team_color
+import helpers.auth as AUTH
 
 _cfg, _ = page_chrome()
 
@@ -148,3 +149,53 @@ else:
         f"<span style='color:var(--subtext)'>"
         f"{'Custom' if _cur else 'Auto'} · {_cur or _auto}</span>",
         unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ACCOUNT & USERS  (login is enabled by [auth] in .streamlit/secrets.toml)
+# ══════════════════════════════════════════════════════════════════════════════
+st.subheader("Account & users")
+
+_me = AUTH.current_user()
+
+if not AUTH.auth_enabled():
+    st.info(
+        "Login is **off** — the app runs in open local mode. To require "
+        "sign-in (needed before exposing the app to other coaches), copy "
+        "`.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and "
+        "fill in the Google OAuth credentials — see `AUTH_SETUP.md`.")
+elif _me["role"] != "admin":
+    st.caption(f"Signed in as **{_me['email']}** ({_me['role']}). "
+               "Only the admin can manage users.")
+    if st.button("Log out", key="au_logout"):
+        st.logout()
+else:
+    st.caption(f"Signed in as **{_me['email']}** (admin).")
+    if st.button("Log out", key="au_logout"):
+        st.logout()
+
+    _users = AUTH.list_users()
+    for _u in _users:
+        _c1, _c2, _c3 = st.columns([4, 2, 1])
+        _c1.write(f"**{_u['email']}**" + (f" · {_u['name']}" if _u["name"] else ""))
+        _c2.write(_u["role"])
+        _is_self = _u["email"] == _me["email"]
+        if _c3.button("Remove", key=f"au_rm_{_u['email']}", disabled=_is_self,
+                      help="You can't remove yourself." if _is_self else None):
+            AUTH.remove_user(_u["email"])
+            st.rerun()
+
+    with st.form("au_add", clear_on_submit=True):
+        _a1, _a2, _a3 = st.columns([4, 2, 1])
+        _new_email = _a1.text_input("Email", placeholder="coach@gmail.com",
+                                    label_visibility="collapsed")
+        _new_role = _a2.selectbox("Role", AUTH.ROLES, index=1,
+                                  label_visibility="collapsed")
+        if _a3.form_submit_button("Add", type="primary"):
+            try:
+                AUTH.add_user(_new_email, _new_role, added_by=_me["email"])
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+    st.caption("Added coaches sign in with that Google account's email. "
+               "Re-adding an email updates its role.")

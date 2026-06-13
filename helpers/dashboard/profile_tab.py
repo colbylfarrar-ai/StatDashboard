@@ -17,6 +17,15 @@ def render(ctx):
     st.caption("One player's full card — ratings, signature metrics, shot chart, "
                "game log, league percentiles and a scouting report. Ranks and "
                "percentiles are vs the whole league player pool.")
+    # Tier gate: the full profile card is event-derived (ratings, shot charts,
+    # signature metrics). ctx.has_tracked folds in the per-team entitlement, so a
+    # Free / non-pool viewer gets a lock — box-score lines live on the Players tab.
+    if not ctx.has_tracked:
+        st.info("🔒 The player profile — ratings, shot charts, signature metrics "
+                "and the scouting report — is tracked-analytics depth, a **Paid** "
+                "feature. Per-game box lines are on the **Players** tab. Upgrade "
+                "to unlock the full card.")
+        return
     _ppool = ctx.ptable_full(ctx.gender)
     _prows = sorted(_ppool.values(), key=lambda r: (r["Rank"] or 1e9))
     _tpids = [k for k in _ppool if _ppool[k]["team_id"] == ctx.team_id]

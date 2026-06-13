@@ -152,20 +152,23 @@ def render(ctx):
                 unsafe_allow_html=True)
     if ctx.players:
         rated = [p for p in ctx.players if p["OVERALL"] is not None]
-        top = sorted(rated, key=lambda p: p["OVERALL"], reverse=True)[:3]
-        cards = st.columns(max(len(top), 1))
-        _medal = ["#f0a500", "#adb5bd", "#cd7f32"]
-        for i, (col, p) in enumerate(zip(cards, top)):
-            col.markdown(
-                f"<div class='glass-tile'>"
-                f"<div class='spotlight-num' style='color:{ctx.ACCENT};font-size:42px'>"
-                f"{p['OVERALL']:.0f}</div>"
-                f"<div class='glass-label' style='color:{_medal[i]}'>OVERALL</div>"
-                f"<div class='glass-sub' style='color:#f0f6fc;font-weight:700;"
-                f"font-size:13px;margin-top:6px'>#{p['number']} {p['name']}</div>"
-                f"<div class='glass-sub'>{p['PPG']:.1f} pts · {p['RPG']:.1f} reb · "
-                f"{p['APG']:.1f} ast</div>"
-                f"</div>", unsafe_allow_html=True)
+        # OVERALL is an event-derived rating — gate the hero cards behind the
+        # entitlement-folded has_tracked flag (Free keeps the box PPG leaders).
+        if ctx.has_tracked and rated:
+            top = sorted(rated, key=lambda p: p["OVERALL"], reverse=True)[:3]
+            cards = st.columns(max(len(top), 1))
+            _medal = ["#f0a500", "#adb5bd", "#cd7f32"]
+            for i, (col, p) in enumerate(zip(cards, top)):
+                col.markdown(
+                    f"<div class='glass-tile'>"
+                    f"<div class='spotlight-num' style='color:{ctx.ACCENT};font-size:42px'>"
+                    f"{p['OVERALL']:.0f}</div>"
+                    f"<div class='glass-label' style='color:{_medal[i]}'>OVERALL</div>"
+                    f"<div class='glass-sub' style='color:#f0f6fc;font-weight:700;"
+                    f"font-size:13px;margin-top:6px'>#{p['number']} {p['name']}</div>"
+                    f"<div class='glass-sub'>{p['PPG']:.1f} pts · {p['RPG']:.1f} reb · "
+                    f"{p['APG']:.1f} ast</div>"
+                    f"</div>", unsafe_allow_html=True)
 
         lc, rc = st.columns(2)
         with lc:
@@ -178,6 +181,7 @@ def render(ctx):
                             color=ctx.ACCENT, height=260),
                 width="stretch", key="ov_ppg")
         with rc:
+          if ctx.has_tracked and rated:   # OVERALL leaderboard — tracked-only
             st.markdown("**Top rated** — OVERALL")
             ol = sorted(rated, key=lambda p: p["OVERALL"], reverse=True)[:7]
             st.plotly_chart(

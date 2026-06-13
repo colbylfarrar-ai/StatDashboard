@@ -4423,6 +4423,7 @@ def _render_profile(P, pid, rows, zsplits, zguard):
 # The Player Profile tab lives in helpers/dashboard/profile_tab.py; the heavy
 # renderer (_render_profile) and zone tables stay here and ride in as callables.
 _prof_ctx = SimpleNamespace(team_id=team_id, gender=gender, team=team,
+                            has_tracked=has_tracked,
                             ptable_full=_ptable_full,
                             pp_zone_tables=_pp_zone_tables,
                             render_profile=_render_profile)

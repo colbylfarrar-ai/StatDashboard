@@ -763,11 +763,19 @@ def _matchup_grid(g, tid, _ids):
 # ══════════════════════════════════════════════════════════════════════════════
 #  RENDER MAP — this file renders OUT OF DECLARATION ORDER. Read before editing.
 # ──────────────────────────────────────────────────────────────────────────────
-#  Each section is an @st.fragment (def _fx_*), so a widget click inside it only
-#  reruns that section, not the whole page. Render order in the file:
-#    _fx_over    → tab_over     Overview
-#    _fx_players → tab_players   Players (nested 2PT/3PT sub-tabs inside)
-#    _fx_sched   → tab_sched     Schedule + box-score picker
+#  Big Bet 5 split in progress: five top tabs now live in helpers/dashboard/
+#  as render(ctx) @st.fragments — the page builds a SimpleNamespace ctx of the
+#  shared per-team state at each call site and hands it over (convention in
+#  helpers/dashboard/__init__.py). The Charts + Lab block is still inline.
+#
+#  EXTRACTED (helpers/dashboard/<module>.render(ctx)):
+#    overview.py     → tab_over      Overview
+#    players_tab.py  → tab_players   Players (nested 2PT/3PT sub-tabs inside)
+#    sched.py        → tab_sched     Schedule + box-score picker
+#    scout_tab.py    → tab_scout     Scout  (tab position 2 — second-most used)
+#    profile_tab.py  → tab_prof      Player Profile
+#
+#  STILL INLINE — the Charts + Lab block (the hard one; shared data batch):
 #    with tab_lab:     creates the 4 ANALYST sub-tabs (ch_adv bld play impact)
 #       — created BEFORE tab_charts so the ch_* names exist for the with-blocks
 #       below; a `with ch_x:` routes output into whichever tab owns the object,
@@ -775,15 +783,14 @@ def _matchup_grid(g, tid, _ids):
 #    with tab_charts:  creates the 6 game-prep sub-tabs (ch_sc sh rb df tr qt).
 #       Scoring/Shooting/Rebounding/Defense/Trends render INSIDE this block —
 #       they SHARE one computed-once data batch (quarter, qs, cbg, poss, tb,
-#       ob…) and hold no widgets, which is why they are NOT fragmented.
+#       ob…) and hold no widgets, which is why they are NOT fragmented. This
+#       shared batch is why the block resists a clean per-tab extraction: pull
+#       it apart only after decoupling the batch (refactor, then move).
 #       Play Types (_fx_chplay) and Impact Lab (_fx_chimpact) ARE fragments —
 #       each owns a radio, so flipping it reruns only that sub-tab.
 #    _fx_chqt/_fx_chadv/_fx_chbld → ch_qt/ch_adv/ch_bld  (Quarters/Advanced/Build,
 #       rendered BELOW at module level — the sub-tab objects are module globals)
-#    _fx_scout   → tab_scout     Scout (rendered between Advanced and Build)
 #    tab_gloss   → Glossary
-#    _fx_prof5   → tab_prof      Player Profile — rendered LAST (~L5500)
-#  Scout sits at position 2: it's the second-most-used surface in game prep.
 # ══════════════════════════════════════════════════════════════════════════════
 (tab_over, tab_scout, tab_players, tab_prof, tab_sched, tab_charts,
  tab_lab, tab_gloss) = st.tabs(

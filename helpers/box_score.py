@@ -32,6 +32,8 @@ import helpers.team_ratings as TR
 import helpers.gameflow as GF
 import helpers.reports as RP
 import helpers.court as court
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
@@ -268,6 +270,16 @@ def render_box_score(game_id: int):
         f"<td style='width:16%;text-align:center;color:#8b949e;font-size:18px'>@</td>"
         f"<td style='width:42%'>{block(t1name, home_pts, home_win, accent, t1id)}</td>"
         f"</tr></table></div>", unsafe_allow_html=True)
+
+    # Tier gate: a tracked game's analytics tabs are tracked-depth. Everyone sees
+    # the scoreboard (final score = box-score level); lock the tabs for viewers
+    # who can't see this game's tracked depth (Free, or a Paid coach viewing two
+    # teams that are neither their own nor in the league pool).
+    if not ENT.can_see_game_tracked(AUTH.current_user(), t1id, t2id):
+        st.info("🔒 Detailed game analytics — flow, shot charts, lineups and four "
+                "factors — are a **Paid** feature for tracked games. Upgrade, and "
+                "join the league pool to scout opponents, to unlock.")
+        return
 
     # ── shared scoring timeline (Overview KPI + Flow) ──────────────────────────
     scoring = [e for e in events

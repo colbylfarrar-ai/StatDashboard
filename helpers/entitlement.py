@@ -66,6 +66,16 @@ def can_see_team_tracked(ident: dict | None, team_id,
     return _viewer_in_pool(ident, pool) and (team_id is not None and int(team_id) in pool)
 
 
+def can_see_game_tracked(ident: dict | None, team1_id, team2_id,
+                         pool: set[int] | None = None) -> bool:
+    """A game involves two teams and its tracked depth reveals both, so the
+    viewer may see it if they may see EITHER team's tracked depth (it's their
+    own game, or a pooled-vs-anyone game they're entitled to scout)."""
+    pool = pool_team_ids() if pool is None else pool
+    return (can_see_team_tracked(ident, team1_id, pool)
+            or can_see_team_tracked(ident, team2_id, pool))
+
+
 def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool,
                  pool: set[int] | None = None):
     """Resolve a team's tracked-depth visibility for the UI.

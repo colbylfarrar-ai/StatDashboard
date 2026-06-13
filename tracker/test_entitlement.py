@@ -70,4 +70,12 @@ ok(not vis and msg is None, "no tracked data -> no lock message (own note)")
 vis, msg = E.tracked_gate(admin, c, True)
 ok(vis and msg is None, "admin always visible")
 
+print("can_see_game_tracked (two-team games)")
+ok(E.can_see_game_tracked(admin, c, c), "admin sees any game")
+ok(not E.can_see_game_tracked(free, a, b), "free sees no game's tracked depth")
+ok(E.can_see_game_tracked(paid_private, c, b), "paid sees game with their OWN team")
+ok(E.can_see_game_tracked(paid_pooled, a, b), "paid+pooled sees pooled-vs-pooled game")
+ok(E.can_see_game_tracked(paid_pooled, b, c), "paid+pooled sees game if one team pooled")
+ok(not E.can_see_game_tracked(paid_private, a, b), "not-in-pool paid can't see others' game")
+
 print(f"\nALL {PASS} CHECKS PASSED")

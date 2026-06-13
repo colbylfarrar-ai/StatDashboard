@@ -19,6 +19,8 @@ from helpers.court import shot_map as _shot_map
 import helpers.scout as SC
 import helpers.stats as S
 import helpers.scoutboard as SB
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 
 @st.fragment
@@ -54,7 +56,11 @@ def render(ctx):
             st.caption("Off the scouting list: "
                        + ", ".join(_names[p] for p in _hide if p in _names) + ".")
 
-    trk = sc["trk"]
+    # Tier gate: the entire scouting report below is tracked-depth. ctx.has_tracked
+    # is already gated for this team (Free -> off; Paid -> own team / pooled
+    # opponents only), so blank the tracked header metrics and stop early when
+    # it's off — leaving record & power rank (box-score) visible.
+    trk = sc["trk"] if ctx.has_tracked else None
     hcols = st.columns(5)
     hcols[0].metric("Record", sc["record"])
     hcols[1].metric("Power rank", f"#{sc['rank']}/{sc['of']}")
@@ -62,10 +68,13 @@ def render(ctx):
     hcols[3].metric("Def. rating", f"{trk['DRtg']:.0f}" if trk else "—")
     hcols[4].metric("Pace", f"{trk['Pace']:.0f}" if trk else "—")
 
-    if not sc["has_tracked"]:
-        st.warning("No tracked-game data for this team — showing record & ratings "
-                   "only. Track a game to unlock four factors, tendencies & "
-                   "personnel.")
+    if not ctx.has_tracked:
+        _, _lock = ENT.tracked_gate(AUTH.current_user(), ctx.team_id,
+                                    sc["has_tracked"])
+        st.warning(_lock or "No tracked-game data for this team — showing record "
+                   "& ratings only. Track a game to unlock four factors, "
+                   "tendencies & personnel.")
+        return
 
     # ── keys to the game ─────────────────────────────────────────────────────
     k1, k2 = st.columns(2)

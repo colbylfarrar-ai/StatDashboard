@@ -102,6 +102,23 @@ def get_tracker_token(email: str) -> str:
     return rows[0]["tracker_token"] if rows else ""
 
 
+# ── plan + team (tier management, set from the Settings page) ───────────────────
+PLANS = ("free", "paid")
+
+
+def set_plan(email: str, plan: str):
+    if plan not in PLANS:
+        raise ValueError(f"plan must be one of {PLANS}")
+    execute("UPDATE app_users SET plan=? WHERE email=?",
+            (plan, (email or "").strip().lower()))
+
+
+def set_team(email: str, team_id):
+    """Assign the coach's own team (their own-data scope). team_id int or None."""
+    execute("UPDATE app_users SET team_id=? WHERE email=?",
+            (team_id, (email or "").strip().lower()))
+
+
 def bootstrap_admin_if_empty(email: str, name: str = ""):
     """First sign-in on an empty user table becomes admin (one-time setup).
     Returns 'admin' if the bootstrap happened, else None."""

@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
-from database.db import query
+from database.db import query, execute
 from helpers.settings_utils import (
     set_setting, get_setting, ACCENT_PRESETS, STYLE_PRESETS, DEFAULTS,
 )
@@ -177,16 +177,64 @@ else:
     if st.button("Log out", key="au_logout"):
         st.logout()
 
-    _users = AUTH.list_users()
-    for _u in _users:
-        _c1, _c2, _c3 = st.columns([4, 2, 1])
-        _c1.write(f"**{_u['email']}**" + (f" · {_u['name']}" if _u["name"] else ""))
-        _c2.write(_u["role"])
-        _is_self = _u["email"] == _me["email"]
-        if _c3.button("Remove", key=f"au_rm_{_u['email']}", disabled=_is_self,
-                      help="You can't remove yourself." if _is_self else None):
-            AUTH.remove_user(_u["email"])
-            st.rerun()
+    _team_rows = query("SELECT id, name FROM teams ORDER BY name")
+    _team_opts = [None] + [r["id"] for r in _team_rows]
+    _team_name = {r["id"]: r["name"] for r in _team_rows}
+
+    def _team_label(i):
+        return "(no team)" if i is None else _team_name.get(i, f"#{i}")
+
+    for _u in AUTH.list_users():
+        _email = _u["email"]
+        _is_self = _email == _me["email"]
+        _plan = _u["plan"] if _u["plan"] in AUTH.PLANS else "free"
+        _hdr = (f"{_email} · {_u['role']} · {_plan}"
+                + (f" · {_team_label(_u['team_id'])}" if _u["team_id"] else ""))
+        with st.expander(_hdr):
+            mc1, mc2 = st.columns(2)
+            _role = mc1.selectbox(
+                "Role", AUTH.ROLES, index=AUTH.ROLES.index(_u["role"]),
+                key=f"role_{_email}", disabled=_is_self,
+                help="You can't change your own role." if _is_self else None)
+            if not _is_self and _role != _u["role"]:
+                AUTH.add_user(_email, _role)         # upserts role only
+                st.rerun()
+            _newplan = mc2.selectbox(
+                "Plan", AUTH.PLANS, index=AUTH.PLANS.index(_plan),
+                key=f"plan_{_email}",
+                help="Paid unlocks tracked depth + the mobile tracker app.")
+            if _newplan != _plan:
+                AUTH.set_plan(_email, _newplan)
+                st.rerun()
+            _curteam = _u["team_id"] if _u["team_id"] in _team_opts else None
+            _newteam = st.selectbox(
+                "Team", _team_opts, index=_team_opts.index(_curteam),
+                format_func=_team_label, key=f"team_{_email}",
+                help="The coach's own team — defines their own-data scope.")
+            if _newteam != _u["team_id"]:
+                AUTH.set_team(_email, _newteam)
+                st.rerun()
+
+            st.markdown("**Mobile tracker token**")
+            _tok = AUTH.get_tracker_token(_email)
+            if _tok:
+                st.code(_tok, language=None)
+                if st.button("Revoke token", key=f"tokrm_{_email}"):
+                    AUTH.clear_tracker_token(_email)
+                    st.rerun()
+            else:
+                _can_token = (_newplan == "paid") or (_role == "admin")
+                if st.button("Issue token", key=f"tokgen_{_email}",
+                             disabled=not _can_token,
+                             help=None if _can_token else "Paid/admin only."):
+                    AUTH.set_tracker_token(_email)
+                    st.rerun()
+                st.caption("The coach pastes this into the mobile tracker (Paid/admin only).")
+
+            if st.button("Remove user", key=f"rm_{_email}", disabled=_is_self,
+                         help="You can't remove yourself." if _is_self else None):
+                AUTH.remove_user(_email)
+                st.rerun()
 
     with st.form("au_add", clear_on_submit=True):
         _a1, _a2, _a3 = st.columns([4, 2, 1])
@@ -200,5 +248,21 @@ else:
                 st.rerun()
             except ValueError as e:
                 st.error(str(e))
-    st.caption("Added coaches sign in with that Google account's email. "
-               "Re-adding an email updates its role.")
+    st.caption("Add a coach by email, then set their plan, team and tracker token "
+               "above. Re-adding an email updates its role.")
+
+    # ── league pool (reciprocity toggle) ─────────────────────────────────────
+    st.markdown("**League pool**")
+    st.caption("A team in the pool shares its tracked games with other pooled "
+               "coaches and can scout the pool in return (reciprocity).")
+    _pool_rows = query("SELECT id, name, in_pool FROM teams ORDER BY name")
+    if _pool_rows:
+        _pt = st.selectbox("Pool team", _pool_rows,
+                           format_func=lambda r: r["name"], key="pool_team",
+                           label_visibility="collapsed")
+        _on = st.toggle("In league pool", value=bool(_pt["in_pool"]),
+                        key="pool_toggle")
+        if _on != bool(_pt["in_pool"]):
+            execute("UPDATE teams SET in_pool=? WHERE id=?",
+                    (1 if _on else 0, _pt["id"]))
+            st.rerun()

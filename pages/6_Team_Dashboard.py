@@ -69,6 +69,8 @@ import helpers.gameflow as GF
 import helpers.fouls as FL
 import helpers.manual_box as MB
 import helpers.scoutboard as SB
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 # Tab modules (Big Bet 5 split) — render(ctx) fragments; ctx packs the shared
 # page-level state. See helpers/dashboard/__init__.py for the convention.
 from types import SimpleNamespace
@@ -646,7 +648,12 @@ bd = bundle["breakdown"]
 summ = bundle["summary"]
 sc_score = scored.get(team_id, {})
 sc_track = tracked.get(team_id, {})
-has_tracked = bool(bundle["tracked_ids"])
+# Tier gate: Paid sees tracked depth on their own team always, on other teams
+# only when both are in the league pool; Free sees box-score only. This single
+# has_tracked flag flows to ctx.has_tracked and ~17 downstream sites, so gating
+# it here gates the whole dashboard for the viewed team in one place.
+_raw_tracked = bool(bundle["tracked_ids"])
+has_tracked, _tracked_lock = ENT.tracked_gate(AUTH.current_user(), team_id, _raw_tracked)
 # one helper, both rankings: 'overall' (everything / results-only) + 'tracked'
 rank_info = TR.team_rank(team_id, scored=scored, tracked=tracked)
 
@@ -697,7 +704,9 @@ st.markdown(
     + "</div>",
     unsafe_allow_html=True)
 
-if not has_tracked:
+if _tracked_lock:
+    st.warning(_tracked_lock)
+elif not has_tracked:
     st.warning("No **tracked** games for this team yet — only results-based "
                "ratings, record and schedule are available. Track a game in the "
                "Game Tracker to unlock shooting, possession and four-factor "

@@ -36,6 +36,8 @@ from helpers.ui import (page_chrome, style_fig as _style, AWAY, CARD_BG, GRID,
 from helpers.cards import team_short as _team_short, fmt as _fmt, bar_h
 from helpers.glossary import glossary_tab
 import helpers.officials as OFF
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 _cfg, ACCENT = page_chrome("Officials")
 HOME = ACCENT
@@ -136,6 +138,21 @@ def _official_game_log(off_pk, g):
 hc1, hc2 = st.columns([3, 1])
 gender = gender_radio(hc2, default=None, key="off_league", include_all=True)
 gender_lbl = "All" if gender is None else gender_label(gender)
+
+# Tier gate: the entire officials hub is built from foul EVENTS attributed to a
+# named ref (who called what, when, vs which team) — event-derived analytics, no
+# box-only view exists here. Plan-level gate (individual/official data is
+# pool-agnostic, per the gating taxonomy), so lock the whole page for Free.
+if not ENT.has_paid_plan(AUTH.current_user()):
+    with hc1:
+        page_header("Officiating Lab",
+                    sub=f"{gender_lbl} league · whistle rates, home/away lean, "
+                        "foul timing and per-ref breakdowns.")
+    st.info("🔒 **Officiating analytics are a Paid feature.** Whistle tightness, "
+            "home/away foul lean, foul-timing fingerprints and the per-official "
+            "deep dive all come from tracked foul events. Upgrade to unlock the "
+            "officials hub.")
+    st.stop()
 
 data = _official_overview(gender)
 rows = data["officials"]

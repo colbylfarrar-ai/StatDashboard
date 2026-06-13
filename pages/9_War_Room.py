@@ -36,6 +36,8 @@ import helpers.simulation as SIM
 import helpers.player_ratings as PR
 import helpers.lineups as LU
 import helpers.team_analytics as TA
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 from database.db import query
 
 _cfg, ACCENT = page_chrome("War Room")
@@ -93,6 +95,18 @@ if not scored:
         "Enter game results in the Input Hub and track a few games — the War Room "
         "simulates straight from the league ratings.",
         cta="Start in the Input Hub")
+    st.stop()
+
+# Tier gate: the War Room is a premium planning tool — Monte-Carlo matchups,
+# season/bracket sims and the lineup creator. Plan-level entry (has_paid_plan);
+# inside, the tracked-possession projection and lineup chemistry add per-team /
+# pool checks (see below).
+if not ENT.has_paid_plan(AUTH.current_user()):
+    empty_state(
+        "The War Room is a Paid feature",
+        "Monte-Carlo matchups, season and bracket simulations, and the lineup "
+        "creator all unlock with a Paid plan. Upgrade to game-plan like the pros.",
+        icon="🔒")
     st.stop()
 
 name_of = {t: r["name"] for t, r in scored.items()}
@@ -256,7 +270,8 @@ def _render_matchup():
                                "Detail": c["note"]} for c in pred["components"]]),
                 hide_index=True, width="stretch")
 
-            if pred["tracked"]:
+            if pred["tracked"] and ENT.can_see_game_tracked(
+                    AUTH.current_user(), ta, tb):
                 tk = pred["tracked"]
                 st.markdown("**Tracked possession projection** — both teams have "
                             "tracked games")
@@ -473,7 +488,11 @@ with tab_lineup:
             _chosen = st.multiselect("Lineup (up to 5)", list(_lab), default=_def5,
                                      format_func=lambda pid: _lab[pid],
                                      max_selections=5, key="wl1_pick")
-            if _chosen:
+            if _chosen and not ENT.can_see_team_tracked(AUTH.current_user(), _t):
+                st.info("🔒 Lineup projections & observed-together ratings for "
+                        "another team need the **league pool** — your own team is "
+                        "included with any Paid plan.")
+            elif _chosen:
                 _pred = TA.lineup_prediction(_rows, _chosen, _ctxd, _t)
                 _m = st.columns(5)
                 _m[0].metric("Proj ORtg", f"{_pred['ORtg']:.1f}"
@@ -626,8 +645,12 @@ with tab_lineup:
             } for r in _sel]), hide_index=True, width="stretch", key="wl_tbl")
 
             _teams = {r["team_id"] for r in _sel}
-            if len(_teams) == 1 and len(_sel) >= 2:
-                _tid = next(iter(_teams))
+            # Observed-together = real on-court lineup chemistry for one team →
+            # own team (any Paid) or another team only via the league pool.
+            _one_tid = next(iter(_teams)) if len(_teams) == 1 else None
+            if (_one_tid is not None and len(_sel) >= 2
+                    and ENT.can_see_team_tracked(AUTH.current_user(), _one_tid)):
+                _tid = _one_tid
                 _gids = [g["id"] for g in query(
                     "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1",
                     (_tid, _tid))]

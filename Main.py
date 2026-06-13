@@ -23,6 +23,8 @@ _cfg, ACCENT = page_chrome("Analytics Hub")
 import pandas as pd
 import plotly.graph_objects as go
 import helpers.trends as TRD
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -187,6 +189,11 @@ except Exception:
 
 D = _dashboard(_gender)
 
+# Plan-level gate for the event-derived league-overview stats below (GEI, the
+# top team's possession ratings, the OVERALL rating columns). Per the gating
+# taxonomy, league-overview / leaderboard data is pool-agnostic, so has_paid_plan.
+_paid = ENT.has_paid_plan(AUTH.current_user())
+
 if D.get("errors"):
     st.warning("Some dashboard data failed to load")
     with st.expander("Error details"):
@@ -213,8 +220,8 @@ else:
         k[4].metric("Top scorer", D["scorer"][0],
                     f"{dl:+.1f} vs avg ppg" if dl is not None else None)
 
-    # ── game of the season banner ──────────────────────────────────────────────
-    if D["game"]:
+    # ── game of the season banner (GEI is event-derived — Paid only) ───────────
+    if D["game"] and _paid:
         gei, n1, n2, h, a = D["game"]
         from helpers.win_probability import excitement_label
         st.markdown(
@@ -233,13 +240,15 @@ else:
                                    accent=ACCENT, height=170),
                             width="stretch", key="g_power")
             trk = D.get("top_trk")
-            if trk:
+            if trk and _paid:
                 st.plotly_chart(_gauge(trk["ORtg"], "Off. rating", 60, 120,
                                        ref=D.get("avg_ortg"), accent=GOOD,
                                        height=170), width="stretch", key="g_ortg")
                 st.plotly_chart(_gauge(trk["DRtg"], "Def. rating (low=good)", 60, 120,
                                        ref=D.get("avg_ortg"), accent=AWAY,
                                        height=170), width="stretch", key="g_drtg")
+            elif trk and not _paid:
+                st.caption("🔒 Possession ratings (ORtg / DRtg) are a Paid feature.")
             else:
                 st.caption("Track a game for the top team to unlock efficiency gauges.")
 
@@ -298,14 +307,16 @@ else:
         st.markdown("<div class='lab-hdr'>Scoring leaders</div>", unsafe_allow_html=True)
         if D["scorer_rows"]:
             sdf = pd.DataFrame(D["scorer_rows"])
-            st.dataframe(
-                sdf, hide_index=True, width="stretch", key="lb_scorers",
-                column_config={
-                    "PPG": st.column_config.NumberColumn("PPG", format="%.1f"),
-                    "OVR": st.column_config.ProgressColumn(
-                        "OVR", format="%.0f", min_value=0, max_value=100),
-                    "Trend": st.column_config.LineChartColumn("PTS by game"),
-                })
+            # OVERALL is an event-derived rating — drop the OVR column for Free.
+            _scfg = {"PPG": st.column_config.NumberColumn("PPG", format="%.1f"),
+                     "Trend": st.column_config.LineChartColumn("PTS by game")}
+            if _paid:
+                _scfg["OVR"] = st.column_config.ProgressColumn(
+                    "OVR", format="%.0f", min_value=0, max_value=100)
+            else:
+                sdf = sdf.drop(columns=["OVR"], errors="ignore")
+            st.dataframe(sdf, hide_index=True, width="stretch", key="lb_scorers",
+                         column_config=_scfg)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SEARCH + NOTABLES
@@ -334,12 +345,14 @@ if D["scored"]:
             with sc1:
                 st.caption("Players")
                 if pm:
-                    st.dataframe(pd.DataFrame([
+                    _pdf = pd.DataFrame([
                         {"Player": p["name"], "Team": p["team"],
                          "PPG": round(p["ppg"], 1) if p["ppg"] is not None else None,
                          "OVR": round(p["ovr"]) if p["ovr"] is not None else None}
-                        for p in pm]),
-                        hide_index=True, width="stretch")
+                        for p in pm])
+                    if not _paid:   # OVERALL rating is Paid-only
+                        _pdf = _pdf.drop(columns=["OVR"], errors="ignore")
+                    st.dataframe(_pdf, hide_index=True, width="stretch")
                 else:
                     st.caption("No players match.")
             with sc2:

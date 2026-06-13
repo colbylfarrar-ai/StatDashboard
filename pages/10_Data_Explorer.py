@@ -24,6 +24,8 @@ import helpers.player_ratings as PR
 import helpers.archetypes as AR
 import helpers.stats as S
 import helpers.court as court
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 _cfg, ACCENT = page_chrome("Data Explorer")
 
@@ -65,10 +67,25 @@ if not table:
                 "more games in the Game Tracker.", icon="📊")
     st.stop()
 
-# attach archetype label, build the master frame
-_arche = _clusters(gender, min_g)
-df = pd.DataFrame([{**r, "Archetype": _arche.get(pid, {}).get("archetype", "—")}
-                   for pid, r in table.items()])
+# Tier gate: individual player data is plan-level (pool-agnostic). Paid sees the
+# full ~60-column event-derived table + archetypes + shot maps; Free sees only
+# box-derivable columns (the event keys are dropped at the source so the column /
+# axis pickers below never offer them), and the event-only tabs are locked.
+_paid = ENT.has_paid_plan(AUTH.current_user())
+if not _paid:
+    table = PR.box_only_table(table)
+    st.caption("🔒 You're on the **Free** tier — box-score stats only. Tracked "
+               "analytics (ratings, usage, shot quality, archetypes, shot maps) "
+               "are a Paid feature.")
+
+# attach archetype label (Paid only — clustering uses event-derived features),
+# build the master frame
+if _paid:
+    _arche = _clusters(gender, min_g)
+    df = pd.DataFrame([{**r, "Archetype": _arche.get(pid, {}).get("archetype", "—")}
+                       for pid, r in table.items()])
+else:
+    df = pd.DataFrame([dict(r) for r in table.values()])
 
 _EXCLUDE = {"team_id", "number"}
 num_cols = [c for c in df.columns
@@ -145,6 +162,10 @@ with t_scatter:
 
 # ── tab 3: PCA style map ───────────────────────────────────────────────────────
 with t_map:
+  if not _paid:
+    st.info("🔒 The style map clusters players on tracked style features "
+            "(usage, shot-creation, shot location) — a Paid feature.")
+  else:
     sm = _stylemap(gender, min_g)
     pts = sm.get("points", {})
     if not pts:
@@ -193,6 +214,10 @@ with t_corr:
 
 # ── tab 5: shot maps (hexbin / expected points / scatter) ─────────────────────
 with t_shots:
+  if not _paid:
+    st.info("🔒 Shot maps plot tap-captured shot locations and a distance-make "
+            "model — a Paid feature.")
+  else:
     st.caption("Shot locations from the court tap (x, y). Legacy zone-only shots "
                "sit at their zone centroid (approx) so the maps work today — they "
                "sharpen as you track games with the new tap capture.")

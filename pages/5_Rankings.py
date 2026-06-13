@@ -45,8 +45,25 @@ import helpers.predictor as PRED
 import helpers.team_analytics as TA
 import helpers.stats as S
 import helpers.league_analytics as LA
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 _cfg, ACCENT = page_chrome("Rankings")
+
+
+def _paid_pool_lock():
+    """Lock reason for a LEAGUE-WIDE tracked surface (every team's possession
+    data at once), or None if the viewer may see it. Needs Paid + league pool —
+    see helpers.entitlement.viewer_in_pool."""
+    _ident = AUTH.current_user()
+    if not ENT.has_paid_plan(_ident):
+        return ("🔒 Tracked league analytics — possession ratings, four factors "
+                "and the advanced charts — are a **Paid** feature. Upgrade to "
+                "unlock.")
+    if not ENT.viewer_in_pool(_ident):
+        return ("🔒 Seeing every team's tracked ratings needs the **league pool** "
+                "— turn on the league toggle for your team in Settings.")
+    return None
 
 # futuristic-lab palette (mirrors the Team Analytics advanced layer)
 GOOD = "#3fb950"
@@ -711,6 +728,15 @@ def _fx_team():
 
     # ── Tracked deep dive (possession-based, tracked games only) ─────────────
     _lab_hdr("Tracked deep dive")
+    # Single-team tracked depth: own team (Paid) always; another team needs the
+    # league pool on both sides. This is the last section of _fx_team, so a
+    # locked viewer just gets the message and we return.
+    if not ENT.can_see_team_tracked(AUTH.current_user(), pick):
+        st.info("🔒 The tracked deep dive — possession ratings, four factors, "
+                "quarter PPP and win/loss patterns — is **Paid** for your own "
+                "team; scouting another team's tracked depth needs the league "
+                "pool (both teams opted in).")
+        return
     _deep = _team_tracked_deep(pick)
     if not _deep:
         empty_state("No tracked games for this team yet",
@@ -995,7 +1021,11 @@ def _fx_track():
 #  TAB 5 — TEAM CHARTS  (tracked-event driven, cross-team) + STAT LAB explorer
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_track:
-    _fx_track()
+    _trk_lock = _paid_pool_lock()
+    if _trk_lock:
+        st.info(_trk_lock)
+    else:
+        _fx_track()
 
 
 @st.fragment
@@ -1388,7 +1418,11 @@ def _fx_chart():
 #  TAB 5 — EVERYTHING  (whole-league analytics + matchup predictor)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_chart:
-    _fx_chart()
+    _chart_lock = _paid_pool_lock()
+    if _chart_lock:
+        st.info(_chart_lock)
+    else:
+        _fx_chart()
 
 
 @st.fragment
@@ -1907,7 +1941,13 @@ def _fx_cmp():
                        "margin breakdown and simulation live in the War Room.")
 
         _ma, _mb = _cts.get(cA), _cts.get(cB)
-        if _ma and _mb:
+        # The tracked profile reveals BOTH teams' possession depth side by side,
+        # so require entitlement to each (own team Paid; another team via the
+        # league pool) — stricter than either-team can_see_game_tracked.
+        _cmp_ident = AUTH.current_user()
+        _cmp_ok = (ENT.can_see_team_tracked(_cmp_ident, cA)
+                   and ENT.can_see_team_tracked(_cmp_ident, cB))
+        if _ma and _mb and _cmp_ok:
             st.markdown(_ttable("Tracked profile — four factors & efficiency", [
                 _trow("eFG%", _ma["eFG"], _mb["eFG"]),
                 _trow("Turnover %", _ma["TOVpct"], _mb["TOVpct"], hib=False),
@@ -1919,6 +1959,9 @@ def _fx_cmp():
                 _trow("Pace", _ma["Pace"], _mb["Pace"], fmt="{:.0f}", neutral=True),
                 _trow("Points / poss", _ma["PPP"], _mb["PPP"], fmt="{:.2f}"),
             ]), unsafe_allow_html=True)
+        elif _ma and _mb and not _cmp_ok:
+            st.info("🔒 The tracked four-factor & efficiency compare is **Paid**, "
+                    "and needs the league pool for any team that isn't yours.")
         else:
             st.info("Four-factor & efficiency compare needs both teams tracked.")
 

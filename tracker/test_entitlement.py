@@ -78,4 +78,19 @@ ok(E.can_see_game_tracked(paid_pooled, a, b), "paid+pooled sees pooled-vs-pooled
 ok(E.can_see_game_tracked(paid_pooled, b, c), "paid+pooled sees game if one team pooled")
 ok(not E.can_see_game_tracked(paid_private, a, b), "not-in-pool paid can't see others' game")
 
+print("viewer_in_pool (pool-membership of the viewer's own team)")
+ok(E.viewer_in_pool(admin), "admin always qualifies")
+ok(E.viewer_in_pool(paid_pooled), "coach on pooled team A is in-pool")
+ok(E.viewer_in_pool(free), "membership-only: free coach on pooled team A still counts")
+ok(not E.viewer_in_pool(paid_private), "coach on private team C is not in-pool")
+ok(not E.viewer_in_pool(None), "no identity -> not in pool")
+
+print("paid_pool gate (has_paid_plan AND viewer_in_pool) — league-wide tracked")
+ok(E.has_paid_plan(paid_pooled) and E.viewer_in_pool(paid_pooled),
+   "paid coach on pooled team passes the paid_pool gate")
+ok(not (E.has_paid_plan(free) and E.viewer_in_pool(free)),
+   "free coach on pooled team fails paid_pool (not paid)")
+ok(not (E.has_paid_plan(paid_private) and E.viewer_in_pool(paid_private)),
+   "paid coach on private team fails paid_pool (not pooled)")
+
 print(f"\nALL {PASS} CHECKS PASSED")

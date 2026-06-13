@@ -51,6 +51,21 @@ def _viewer_in_pool(ident: dict | None, pool: set[int]) -> bool:
     return tid is not None and int(tid) in pool
 
 
+def viewer_in_pool(ident: dict | None) -> bool:
+    """Is this viewer's OWN team opted into the shared league pool? Admin always
+    qualifies. Compose with has_paid_plan for the 'paid + pooled' gate that
+    guards LEAGUE-WIDE tracked surfaces — every team's tracked data shown at once
+    (the Rankings Tracked / Team-Charts tabs, the cross-team War Room tabs).
+    Gating those plan-only would let a non-pool coach read the whole league's
+    tracked depth without contributing, bypassing pool reciprocity. Single-team
+    surfaces use can_see_team_tracked instead."""
+    if not ident:
+        return False
+    if ident.get("role") == "admin":
+        return True
+    return _viewer_in_pool(ident, pool_team_ids())
+
+
 def can_see_team_tracked(ident: dict | None, team_id,
                          pool: set[int] | None = None) -> bool:
     """May this viewer see TRACKED depth for `team_id`? See the model above.

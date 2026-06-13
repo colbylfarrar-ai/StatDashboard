@@ -213,6 +213,28 @@ def initialize_database():
                    added_by TEXT NOT NULL DEFAULT '',
                    added_at TEXT NOT NULL DEFAULT (datetime('now'))
                )""",
+            # Monetization / tenancy (see scaling-roadmap). Free vs Paid plans,
+            # which team a coach belongs to (many coaches -> one team; NULL for
+            # admin/owner), and a paid-through date for the future Stripe poll.
+            #   plan       'free' | 'paid'  — Paid unlocks tracked depth + tracker
+            #   team_id    -> teams(id), the coach's own team (own-data scope)
+            #   paid_until ISO date; entitlement honours it when set
+            "ALTER TABLE app_users ADD COLUMN team_id    INTEGER",
+            "ALTER TABLE app_users ADD COLUMN plan       TEXT NOT NULL DEFAULT 'free'",
+            "ALTER TABLE app_users ADD COLUMN paid_until TEXT NOT NULL DEFAULT ''",
+            # League co-op opt-in toggle (the free, season-locked reciprocity
+            # switch): when 1, this team's tracked games join the shared league
+            # pool AND its coaches gain pool-wide scouting. Default private (0).
+            "ALTER TABLE teams ADD COLUMN in_pool INTEGER NOT NULL DEFAULT 0",
+            # Attribution: email of the coach who logged a tracked game. Drives
+            # pool membership (logger's team in_pool flag) and own-vs-others
+            # visibility. '' for legacy/app-logged games.
+            "ALTER TABLE games ADD COLUMN tracked_by TEXT NOT NULL DEFAULT ''",
+            # Per-coach tracker token (replaces the single shared TRACKER_TOKEN):
+            # the mobile API resolves Bearer <token> -> this coach, gating the
+            # tracker by plan and stamping games.tracked_by. Issued/rotated from
+            # the Settings page.
+            "ALTER TABLE app_users ADD COLUMN tracker_token TEXT NOT NULL DEFAULT ''",
             # Scouting: per-team game-plan notes. (The play-drawing board was
             # dropped — streamlit-drawable-canvas is incompatible with Streamlit
             # 1.53 — so scout_plays is removed.)

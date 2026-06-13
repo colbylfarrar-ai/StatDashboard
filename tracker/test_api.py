@@ -42,6 +42,13 @@ gid = execute("INSERT INTO games (team1_id,team2_id,date) VALUES (?,?, '2026-06-
               (t1, t2))
 
 client = TestClient(app)
+# Per-coach auth (fail-closed): seed a Paid coach + a Free coach, then send the
+# Paid coach's token on every call. games.tracked_by attribution flows from this.
+execute("INSERT INTO app_users (email, role, name, plan, tracker_token) "
+        "VALUES ('coach@test','coach','Test Coach','paid','tok-paid')")
+execute("INSERT INTO app_users (email, role, name, plan, tracker_token) "
+        "VALUES ('free@test','coach','Free Coach','free','tok-free')")
+client.headers.update({"Authorization": "Bearer tok-paid"})
 floor = home[:5] + away[:5]
 
 print("game list / detail")
@@ -115,21 +122,28 @@ pm_after = query("SELECT plus_minus FROM game_lineup_players WHERE game_id=? AND
                  (gid, home[0]))[0]["plus_minus"]
 ok(pm_before - pm_after == 3, "undoing a made 3 reverses +/- by 3")
 
-print("auth")
-os.environ["TRACKER_TOKEN"] = "secret123"
-ok(client.get("/api/games").status_code == 401, "no token -> 401")
-ok(client.get("/api/games", headers={"Authorization": "Bearer wrong"}).status_code == 401,
-   "wrong token -> 401")
-ok(client.get("/api/games", headers={"Authorization": "Bearer secret123"}).status_code == 200,
-   "right token -> 200")
-ok(client.get("/").status_code in (200, 404), "PWA shell never token-blocked")
+print("auth (fail-closed, per-coach)")
+no = TestClient(app)   # no default Authorization header
+ok(no.get("/api/games").status_code == 401, "no token -> 401")
+ok(no.get("/api/games", headers={"Authorization": "Bearer wrong"}).status_code == 401,
+   "unknown token -> 401")
+ok(no.get("/api/games", headers={"Authorization": "Bearer tok-free"}).status_code == 403,
+   "Free plan token -> 403")
+ok(no.get("/api/games", headers={"Authorization": "Bearer tok-paid"}).status_code == 200,
+   "Paid coach token -> 200")
+os.environ["TRACKER_TOKEN"] = "owner-master"
+ok(no.get("/api/games", headers={"Authorization": "Bearer owner-master"}).status_code == 200,
+   "env owner master token -> 200")
 del os.environ["TRACKER_TOKEN"]
+ok(no.get("/").status_code in (200, 404), "PWA shell never token-blocked")
 
 print("finish")
 r = client.post(f"/api/games/{gid}/finish").json()
 ok(r["ok"] and r["home"] == 3 and r["away"] == 1, "finish freezes 3-1")
 g = query("SELECT tracked, home_score, away_score FROM games WHERE id=?", (gid,))[0]
 ok(g["tracked"] == 1 and g["home_score"] == 3, "games row tracked + frozen")
+ok(query("SELECT tracked_by FROM games WHERE id=?", (gid,))[0]["tracked_by"] == "coach@test",
+   "game attributed to its logging coach (tracked_by)")
 
 print("direct helper (Streamlit page path)")
 gid2 = execute("INSERT INTO games (team1_id,team2_id,date) VALUES (?,?, '2026-06-12')",

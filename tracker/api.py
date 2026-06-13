@@ -9,10 +9,11 @@ so +/- snapshots, possession seconds and zone derivation can never drift.
 Run from the repo root:
     python -m uvicorn tracker.api:app --host 0.0.0.0 --port 8500
 
-Auth: set the TRACKER_TOKEN environment variable to require
-`Authorization: Bearer <token>` on every /api request. Unset = open access,
-meant ONLY for localhost / trusted-LAN use. Set it before exposing this to
-the internet (Cloudflare Tunnel, VPS, ...).
+Auth (fail-closed): every /api request needs `Authorization: Bearer <token>`.
+A token resolves to a coach via app_users.tracker_token (issued on the Settings
+page), or to the owner via the TRACKER_TOKEN env master. Only Paid/admin coaches
+may use the tracker (no valid token = 401; a Free plan = 403). The logging coach
+is stamped onto games.tracked_by for pool membership + attribution.
 """
 from __future__ import annotations
 
@@ -37,20 +38,45 @@ _STATIC = Path(__file__).resolve().parent / "static"
 initialize_database()
 
 
-# ── auth ────────────────────────────────────────────────────────────────────────
-def require_token(request: Request):
-    token = os.environ.get("TRACKER_TOKEN")
-    if not token:
-        return
+# ── auth (per-coach identity; fail-closed) ─────────────────────────────────────
+def _resolve_user(request: Request):
+    """Bearer token -> the coach who owns it. Resolution order:
+       1. a per-coach app_users.tracker_token (issued on the Settings page)
+       2. the env TRACKER_TOKEN master (owner / start_tracker.ps1 bootstrap)
+    Returns the user dict or None. NO token now means NO access (fail-closed)."""
     got = request.headers.get("authorization", "")
-    if got != f"Bearer {token}":
+    if not got.startswith("Bearer "):
+        return None
+    tok = got[7:].strip()
+    if not tok:
+        return None
+    rows = query("SELECT email, role, plan, team_id FROM app_users "
+                 "WHERE tracker_token=? AND tracker_token<>''", (tok,))
+    if rows:
+        return dict(rows[0])
+    env_tok = os.environ.get("TRACKER_TOKEN")
+    if env_tok and tok == env_tok:
+        return {"email": os.environ.get("TRACKER_OWNER_EMAIL", "").strip().lower(),
+                "role": "admin", "plan": "paid", "team_id": None}
+    return None
+
+
+def current_api_user(request: Request) -> dict:
+    """Gate every /api call: a valid token AND a Paid (or admin) plan — the
+    tracker is a paid feature. Returns the identity so handlers can attribute
+    tracked games (games.tracked_by)."""
+    user = _resolve_user(request)
+    if user is None:
         raise HTTPException(status_code=401, detail="bad or missing token")
+    if user.get("role") != "admin" and user.get("plan") != "paid":
+        raise HTTPException(status_code=403, detail="tracker requires a Paid plan")
+    return user
 
 
-# Token guards the API only — the PWA shell (/, /static, /sw.js) must load
+# The gate guards /api only — the PWA shell (/, /static, /sw.js) must load
 # without headers so the app can boot and show its token prompt.
 app = FastAPI(title="APP5 Tracker")
-api = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
+api = APIRouter(prefix="/api", dependencies=[Depends(current_api_user)])
 
 
 # ── request models ──────────────────────────────────────────────────────────────
@@ -182,7 +208,8 @@ def game_live(game_id: int):
 
 
 @api.post("/games/{game_id}/events")
-def post_events(game_id: int, batch: EventBatch):
+def post_events(game_id: int, batch: EventBatch,
+                user: dict = Depends(current_api_user)):
     if not query("SELECT id FROM games WHERE id=?", (game_id,)):
         raise HTTPException(status_code=404, detail="no such game")
     pid2team = {p["id"]: p["team_id"] for p in query(
@@ -205,6 +232,12 @@ def post_events(game_id: int, batch: EventBatch):
             "status": "duplicate" if existed else "inserted",
             "event_id": eid,
         })
+    # Attribute the game to its logger (first event wins; never overwrites) so
+    # pool membership + canonical-pick can resolve who tracked it.
+    if user.get("email"):
+        execute("UPDATE games SET tracked_by=? WHERE id=? "
+                "AND (tracked_by IS NULL OR tracked_by='')",
+                (user["email"], game_id))
     return {"results": results, "live": _scoreboard(game_id)}
 
 
@@ -219,10 +252,14 @@ def undo(game_id: int):
 
 
 @api.post("/games/{game_id}/finish")
-def finish(game_id: int):
+def finish(game_id: int, user: dict = Depends(current_api_user)):
     if not query("SELECT id FROM games WHERE id=?", (game_id,)):
         raise HTTPException(status_code=404, detail="no such game")
     hp, ap = GE.finish_game(game_id)
+    if user.get("email"):
+        execute("UPDATE games SET tracked_by=? WHERE id=? "
+                "AND (tracked_by IS NULL OR tracked_by='')",
+                (user["email"], game_id))
     GE.bump_data_version()
     return {"ok": True, "home": hp, "away": ap}
 
@@ -250,7 +287,7 @@ def create_team(t: NewTeam):
 
 
 @api.post("/games")
-def create_game(g: NewGame):
+def create_game(g: NewGame, user: dict = Depends(current_api_user)):
     if g.team1_id == g.team2_id:
         raise HTTPException(status_code=422, detail="home and away must differ")
     date = normalize_date(g.date)
@@ -260,10 +297,10 @@ def create_game(g: NewGame):
         if not query("SELECT id FROM teams WHERE id=?", (tid,)):
             raise HTTPException(status_code=422, detail=f"no such team {tid}")
     gid = execute(
-        "INSERT INTO games (team1_id, team2_id, date, location, video_url) "
-        "VALUES (?,?,?,?,?)",
+        "INSERT INTO games (team1_id, team2_id, date, location, video_url, tracked_by) "
+        "VALUES (?,?,?,?,?,?)",
         (g.team1_id, g.team2_id, date, (g.location or "").strip() or None,
-         g.video_url.strip()))
+         g.video_url.strip(), (user.get("email") or "")))
     GE.bump_data_version()
     return {"id": gid, "created": True}
 

@@ -421,9 +421,12 @@ def render(ctx):
             st.plotly_chart(_scf, width="stretch", key="scout_shotmap")
             st.caption("Every tap-captured attempt this season — the spots to "
                        "take away.")
+            _sc_db = S.distance_buckets(_sc_shots)
+            if _sc_db:
+                st.caption("By length — " + S.distance_buckets_caption(_sc_db))
 
     # ── shooting by zone (2s vs 3s) ─────────────────────────────────────────
-    if ctx.has_tracked and ctx.bundle.get("zones_by_type"):
+    if _show("zones") and ctx.bundle.get("zones_by_type"):
         st.markdown("<div class='lab-hdr'>Shooting by zone — 2s vs 3s</div>",
                     unsafe_allow_html=True)
         zbt_sc = ctx.bundle["zones_by_type"]["off"]

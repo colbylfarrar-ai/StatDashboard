@@ -159,6 +159,41 @@ st.subheader("Account & users")
 
 _me = AUTH.current_user()
 
+# ── Coaches' Co-op — the per-coach share-to-scout toggle (DEFAULT Solo) ─────────
+# Visible to every signed-in coach (admin + coach). The whole reciprocity engine:
+# Solo keeps your tracked depth private and off the pool; League-wide shares your
+# games AND unlocks scouting of every other league-wide team.
+if AUTH.auth_enabled() and _me.get("email"):
+    st.markdown("### 🤝 Coaches' Co-op")
+    _my_teams = AUTH.get_teams(_me["email"])
+    if not _my_teams:
+        st.caption("Join the **Coaches' Co-op** to share tracked games and scout "
+                   "every league-wide team — but the opt-in is per **team**, so "
+                   "ask the admin to assign you a team first.")
+    else:
+        _lw = AUTH.get_shares_pool(_me["email"])
+        _plural = len(_my_teams) > 1
+        st.caption(f"Your {'teams are' if _plural else 'team is'} currently "
+                   f"**{'League-wide' if _lw else 'Solo (private)'}**.")
+        _new_lw = st.toggle(
+            "League-wide — share to scout", value=_lw, key="me_shares_pool",
+            help="On (League-wide): your team's tracked games join the shared pool "
+                 "AND every coach on your team scouts every other league-wide team. "
+                 "Off (Solo): full depth on your own games only; your tracked data "
+                 "stays private (others see just your box scores).")
+        if _plural:
+            st.caption("You staff **both** teams at your school, so this switch "
+                       "moves them **together** — if one is in the pool, both are.")
+        else:
+            st.caption("**Team-level, private by default.** Turn it on and *all* "
+                       "coaches on your team share and scout. Flipping back to "
+                       "**Solo** stops sharing *future* games; already-shared games "
+                       "stay in the pool until the season ends. Share to scout.")
+        if _new_lw != _lw:
+            AUTH.set_shares_pool(_me["email"], _new_lw)
+            st.rerun()
+    st.divider()
+
 if not AUTH.auth_enabled():
     st.info(
         "Sign-in is currently **off** — anyone who can reach this app can use "
@@ -177,6 +212,50 @@ else:
     if st.button("Log out", key="au_logout"):
         st.logout()
 
+    # ── Review panel — coaches' pending delete requests (write-authz) ─────────
+    import helpers.change_requests as CR
+    _pend = CR.pending()
+    st.markdown(f"### 🗳️ Review panel ({len(_pend)})")
+    if not _pend:
+        st.caption("No pending requests. When a coach deletes shared data it waits "
+                   "here — nothing is removed until you accept it.")
+    else:
+        st.caption("A coach asked to delete the items below. **Accept** runs the "
+                   "delete; **Reject** discards the request. Nothing is gone yet.")
+        for _cr in _pend:
+            _c1, _c2, _c3 = st.columns([6, 1, 1])
+            _c1.write(f"🗑️ Delete {_cr['label']} · by {_cr['requester'] or '—'} · "
+                      f"{_cr['created_at']}")
+            if _c2.button("Accept", key=f"cr_ok_{_cr['id']}", type="primary"):
+                CR.accept(_cr["id"], _me["email"])
+                st.cache_data.clear()
+                st.rerun()
+            if _c3.button("Reject", key=f"cr_no_{_cr['id']}"):
+                CR.reject(_cr["id"], _me["email"])
+                st.rerun()
+    st.divider()
+
+    # ── Audit log — who changed what (moderation) ────────────────────────────
+    with st.expander("🧾 Audit log — recent data changes"):
+        _actors = [r["actor"] for r in
+                   query("SELECT DISTINCT actor FROM audit_log ORDER BY actor")]
+        _pick = st.selectbox("Filter by coach", ["(all)"] + _actors, key="aud_actor")
+        _aq = ('SELECT ts AS "When", actor AS "Coach", op AS "Op", '
+               'table_name AS "Table", row_id AS "Row", rowcount AS "#", '
+               'detail AS "SQL" FROM audit_log {} ORDER BY id DESC LIMIT 300')
+        _arows = (query(_aq.format("")) if _pick == "(all)"
+                  else query(_aq.format("WHERE actor=?"), (_pick,)))
+        if not _arows:
+            st.caption("No changes logged yet. Every team / player / game / official "
+                       "edit or delete — and event corrections — lands here with the "
+                       "coach who made it.")
+        else:
+            st.caption(f"Most recent {len(_arows)} changes (newest first). Spot a "
+                       "coach acting out → ban them above, then restore from backup "
+                       "if needed.")
+            st.dataframe(_arows, hide_index=True, width="stretch")
+    st.divider()
+
     _team_rows = query("SELECT id, name FROM teams ORDER BY name")
     _team_opts = [None] + [r["id"] for r in _team_rows]
     _team_name = {r["id"]: r["name"] for r in _team_rows}
@@ -188,8 +267,13 @@ else:
         _email = _u["email"]
         _is_self = _email == _me["email"]
         _plan = _u["plan"] if _u["plan"] in AUTH.PLANS else "free"
-        _hdr = (f"{_email} · {_u['role']} · {_plan}"
-                + (f" · {_team_label(_u['team_id'])}" if _u["team_id"] else ""))
+        _my_tids = AUTH.get_teams(_email)
+        _team_lw = AUTH.get_shares_pool(_email)
+        _coop = ("🚫 BANNED" if _u.get("pool_banned")
+                 else ("League-wide" if _team_lw else "Solo"))
+        _teams_lbl = " + ".join(_team_label(t) for t in _my_tids) if _my_tids else ""
+        _hdr = (f"{_email} · {_u['role']} · {_plan} · {_coop}"
+                + (f" · {_teams_lbl}" if _teams_lbl else ""))
         with st.expander(_hdr):
             mc1, mc2 = st.columns(2)
             _role = mc1.selectbox(
@@ -206,13 +290,46 @@ else:
             if _newplan != _plan:
                 AUTH.set_plan(_email, _newplan)
                 st.rerun()
-            _curteam = _u["team_id"] if _u["team_id"] in _team_opts else None
-            _newteam = st.selectbox(
-                "Team", _team_opts, index=_team_opts.index(_curteam),
+            _team_ids_only = [r["id"] for r in _team_rows]
+            _cur_tids = [t for t in _my_tids if t in _team_ids_only]
+            _newteams = st.multiselect(
+                "Teams", _team_ids_only, default=_cur_tids,
                 format_func=_team_label, key=f"team_{_email}",
-                help="The coach's own team — defines their own-data scope.")
-            if _newteam != _u["team_id"]:
-                AUTH.set_team(_email, _newteam)
+                help="The coach's own team(s) — their own-data scope. Assign BOTH "
+                     "the boys and girls team if they staff both at one school; "
+                     "those two then share the co-op together.")
+            if sorted(_newteams) != sorted(_cur_tids):
+                AUTH.set_teams(_email, _newteams)
+                st.rerun()
+
+            if not _my_tids:
+                st.caption("🤝 Coaches' Co-op: assign a team above first — the "
+                           "opt-in is per team.")
+            else:
+                _coop_on = AUTH.get_shares_pool(_email)
+                _new_coop = st.toggle(
+                    "Coaches' Co-op: League-wide", value=_coop_on,
+                    key=f"coop_{_email}",
+                    help=("On = this coach's team(s) share tracked games to the pool "
+                          "and every coach on them scouts every league-wide team "
+                          f"(reciprocal). Affects ALL coaches on {_teams_lbl}. A "
+                          "coach who staffs both teams shares them together. Off = "
+                          "Solo/private. Comp a founding cohort League-wide so the "
+                          "pool isn't empty."))
+                if _new_coop != _coop_on:
+                    AUTH.set_shares_pool(_email, _new_coop)
+                    st.rerun()
+
+            _banned = bool(_u.get("pool_banned"))
+            _new_ban = st.toggle(
+                "🚫 Ban from Co-op (bad data)", value=_banned,
+                key=f"ban_{_email}",
+                help="Admin moderation: purge this coach's tracked games from the "
+                     "league pool AND hide the pool from them (forced Solo), "
+                     "regardless of their own toggle. They keep full depth on their "
+                     "own team. Handle any refund separately.")
+            if _new_ban != _banned:
+                AUTH.set_pool_banned(_email, _new_ban)
                 st.rerun()
 
             st.markdown("**Mobile tracker token**")
@@ -248,21 +365,9 @@ else:
                 st.rerun()
             except ValueError as e:
                 st.error(str(e))
-    st.caption("Add a coach by email, then set their plan, team and tracker token "
-               "above. Re-adding an email updates its role.")
+    st.caption("Add a coach by email, then set their plan, team, Co-op mode and "
+               "tracker token above. Re-adding an email updates its role.")
 
-    # ── league pool (reciprocity toggle) ─────────────────────────────────────
-    st.markdown("**League pool**")
-    st.caption("A team in the pool shares its tracked games with other pooled "
-               "coaches and can scout the pool in return (reciprocity).")
-    _pool_rows = query("SELECT id, name, in_pool FROM teams ORDER BY name")
-    if _pool_rows:
-        _pt = st.selectbox("Pool team", _pool_rows,
-                           format_func=lambda r: r["name"], key="pool_team",
-                           label_visibility="collapsed")
-        _on = st.toggle("In league pool", value=bool(_pt["in_pool"]),
-                        key="pool_toggle")
-        if _on != bool(_pt["in_pool"]):
-            execute("UPDATE teams SET in_pool=? WHERE id=?",
-                    (1 if _on else 0, _pt["id"]))
-            st.rerun()
+    # The old per-TEAM league-pool toggle is gone — reciprocity is now PER-COACH
+    # (the Coaches' Co-op toggle above, and each coach's own switch at the top of
+    # this section). A coach is the unit that shares + scouts, not a team.

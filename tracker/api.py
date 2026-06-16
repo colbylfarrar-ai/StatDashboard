@@ -29,9 +29,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from database.db import execute, initialize_database, normalize_date, query
+from database.db import (execute, initialize_database, normalize_date, query,
+                         set_audit_actor)
 import helpers.event_log as EL
 import helpers.game_events as GE
+import helpers.entitlement as ENT
 
 _STATIC = Path(__file__).resolve().parent / "static"
 
@@ -70,6 +72,8 @@ def current_api_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="bad or missing token")
     if user.get("role") != "admin" and user.get("plan") != "paid":
         raise HTTPException(status_code=403, detail="tracker requires a Paid plan")
+    # attribute every tracker write this request to this coach (router-wide Depends)
+    set_audit_actor(user.get("email", ""))
     return user
 
 
@@ -260,6 +264,9 @@ def finish(game_id: int, user: dict = Depends(current_api_user)):
         execute("UPDATE games SET tracked_by=? WHERE id=? "
                 "AND (tracked_by IS NULL OR tracked_by='')",
                 (user["email"], game_id))
+        # tracked_by may have been set just now — re-derive the pooled flag from
+        # this coach's Co-op toggle so the read-path sees it without delay.
+        ENT.recompute_game_pool(game_id)
     GE.bump_data_version()
     return {"ok": True, "home": hp, "away": ap}
 

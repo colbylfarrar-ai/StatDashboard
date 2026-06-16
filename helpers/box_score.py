@@ -273,12 +273,23 @@ def render_box_score(game_id: int):
 
     # Tier gate: a tracked game's analytics tabs are tracked-depth. Everyone sees
     # the scoreboard (final score = box-score level); lock the tabs for viewers
-    # who can't see this game's tracked depth (Free, or a Paid coach viewing two
-    # teams that are neither their own nor in the league pool).
-    if not ENT.can_see_game_tracked(AUTH.current_user(), t1id, t2id):
-        st.info("🔒 Detailed game analytics — flow, shot charts, lineups and four "
-                "factors — are a **Paid** feature for tracked games. Upgrade, and "
-                "join the league pool to scout opponents, to unlock.")
+    # who can't see this game's tracked depth — Free, or a Paid coach who is Solo
+    # (not in the Coaches' Co-op) viewing a game that isn't their own, or a game
+    # that simply isn't pooled (in_pool drives the per-game check).
+    if not ENT.can_see_game_tracked(AUTH.current_user(), t1id, t2id,
+                                    in_pool=g["in_pool"]):
+        # Mirror the other gate sites' branched copy so each locked viewer gets the
+        # right reason: Free -> Paid feature; banned -> suspension; Solo scouting ->
+        # co-op invite; League-wide but this game isn't pooled -> neutral not-shared.
+        _gident = AUTH.current_user()
+        if not ENT.has_paid_plan(_gident):
+            st.info(ENT.MSG_PAID)
+        elif ENT.is_pool_banned(_gident):
+            st.info(ENT.MSG_POOL_BANNED)
+        elif not ENT.viewer_is_league_wide(_gident):
+            st.info(ENT.MSG_COOP_INVITE)
+        else:
+            st.info(ENT.MSG_NOT_SHARED)
         return
 
     # ── shared scoring timeline (Overview KPI + Flow) ──────────────────────────

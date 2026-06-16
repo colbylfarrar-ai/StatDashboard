@@ -170,6 +170,14 @@ def _lineup_net(g, team_id, lineup):
     return TA.lineup_prediction(rows, list(lineup), _wl_ctx(g), team_id)["NetRtg"]
 
 
+# Paid + Solo (not in the Coaches' Co-op) get ONLY the Lineup creator — building
+# your own team's lineup uses your own tracked data. Scouting other teams — the
+# matchup projection and the season/bracket sims (league-wide) — is Co-op only.
+# Lineup + Glossary stay open to any paid coach; the other three gate on league-wide.
+_wr_ident = AUTH.current_user()
+_wr_league_wide = ENT.viewer_is_league_wide(_wr_ident)
+_WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_COOP_INVITE)
+
 tab_match, tab_season, tab_bracket, tab_lineup, tab_gloss = st.tabs(
     ["Matchup", "Season sim", "Bracket", "Lineup", "Glossary"])
 
@@ -299,7 +307,10 @@ def _render_matchup():
 
 
 with tab_match:
-    _render_matchup()
+    if _wr_league_wide:
+        _render_matchup()
+    else:
+        st.info(_WR_LOCK)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -383,7 +394,10 @@ def _render_season():
 
 
 with tab_season:
-    _render_season()
+    if _wr_league_wide:
+        _render_season()
+    else:
+        st.info(_WR_LOCK)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -453,7 +467,10 @@ def _render_bracket():
 
 
 with tab_bracket:
-    _render_bracket()
+    if _wr_league_wide:
+        _render_bracket()
+    else:
+        st.info(_WR_LOCK)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -461,14 +478,27 @@ with tab_bracket:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_lineup:
     st.subheader("Lineup creator")
-    _lmode = st.radio("Build from", ["One team", "Any team"],
-                      horizontal=True, key="wl_mode")
+    # Solo (not League-wide) coaches build ONLY their own team — no "Any team"
+    # mode and no cross-team selector. Admin / League-wide get every team.
+    _li = AUTH.current_user()
+    _li_any = ENT.viewer_is_league_wide(_li)
+    _my_team = _li.get("team_id")
+    _modes = ["One team", "Any team"] if _li_any else ["One team"]
+    _lmode = (st.radio("Build from", _modes, horizontal=True, key="wl_mode")
+              if len(_modes) > 1 else "One team")
 
     if _lmode == "One team":
         st.caption("Pick a team and a five for a possession-calibrated "
                    "projection (ORtg / DRtg / Net vs the league) plus the observed "
                    "on-court rating and the best bench swaps.")
-        _t = st.selectbox("Team", order,
+        _team_opts = order if _li_any else [t for t in order if t == _my_team]
+        if not _team_opts:
+            empty_state("No team to build for",
+                        "Ask the admin to assign you a team with tracked games, "
+                        "then build its lineup here. Go League-wide in Settings to "
+                        "build any team's lineups.")
+            st.stop()
+        _t = st.selectbox("Team", _team_opts,
                           format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}",
                           key="wl1_team")
         _tbl = _wl_table(gender)
@@ -490,8 +520,9 @@ with tab_lineup:
                                      max_selections=5, key="wl1_pick")
             if _chosen and not ENT.can_see_team_tracked(AUTH.current_user(), _t):
                 st.info("🔒 Lineup projections & observed-together ratings for "
-                        "another team need the **league pool** — your own team is "
-                        "included with any Paid plan.")
+                        "another team are a **Coaches' Co-op** feature — your own "
+                        "team works on any Paid plan. Go **League-wide** in Settings "
+                        "to build & scout any team's lineups. Share to scout.")
             elif _chosen:
                 _pred = TA.lineup_prediction(_rows, _chosen, _ctxd, _t)
                 _m = st.columns(5)
@@ -509,7 +540,12 @@ with tab_lineup:
                              f"#{_pred['league']['rank']} / {_pred['league']['of']}")
                 _gids = [gr["id"] for gr in query(
                     "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
-                    "AND tracked=1", (_t, _t))]
+                    "AND tracked=1 AND season='Current'", (_t, _t))]
+                # AXIS-2 read-filter: a League-wide coach scouting another team
+                # sees its observed lineups only over that team's POOLED games.
+                _ovis = ENT.team_visible_tracked_ids(AUTH.current_user(), _t)
+                if _ovis is not None:
+                    _gids = [g for g in _gids if g in _ovis]
                 _obs = LU.custom_unit(_t, list(_chosen), game_ids=_gids) if _gids else None
                 if _obs and _obs.get("poss"):
                     st.markdown("**Observed together — tracked games**")
@@ -652,8 +688,12 @@ with tab_lineup:
                     and ENT.can_see_team_tracked(AUTH.current_user(), _one_tid)):
                 _tid = _one_tid
                 _gids = [g["id"] for g in query(
-                    "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1",
-                    (_tid, _tid))]
+                    "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
+                    "AND tracked=1 AND season='Current'", (_tid, _tid))]
+                # AXIS-2 read-filter: scouting another team → its pooled games only.
+                _ovis = ENT.team_visible_tracked_ids(AUTH.current_user(), _tid)
+                if _ovis is not None:
+                    _gids = [g for g in _gids if g in _ovis]
                 _obs = LU.custom_unit(_tid, [r["pid"] for r in _sel],
                                       game_ids=_gids) if _gids else None
                 if _obs and _obs.get("poss"):

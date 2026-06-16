@@ -68,11 +68,14 @@ def team_zone_by_type(game_ids, team_pids, events=None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_scout(team_id, gender, scored, tracked, pack, table,
-                personnel_limit=7, exclude_pids=None):
+                personnel_limit=7, exclude_pids=None, visible_game_ids=None):
     """Assemble every piece of the scouting report for one team.
 
     personnel_limit=None shows the WHOLE roster (self-scout); exclude_pids drops
-    players (e.g. injured/suspended) from the personnel list."""
+    players (e.g. injured/suspended) from the personnel list. `visible_game_ids`
+    is the entitlement read-filter for the hot-zone / shot-creation views: None =
+    unrestricted (own team / admin), a set restricts them to those games (a
+    League-wide scout passes the team's pooled games)."""
     s = scored.get(team_id, {})
     ts = pack.get("ts", {})
     me = ts.get(team_id)
@@ -184,8 +187,11 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     # four-factors/personnel (event-based) so the zone + creation views must use
     # the same game set or they come back empty.
     gids = [r["id"] for r in query(
-        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1",
-        (team_id, team_id))]
+        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
+        "AND season='Current'", (team_id, team_id))]
+    if visible_game_ids is not None:
+        _vis = set(visible_game_ids)
+        gids = [g for g in gids if g in _vis]
     team_pids = tuple(r["id"] for r in
                       query("SELECT id FROM players WHERE team_id=?", (team_id,)))
     zones = team_zone(tuple(gids), team_pids)
@@ -224,7 +230,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
 #  PRINTABLE HTML
 # ══════════════════════════════════════════════════════════════════════════════
 
-def printable_html(sc, opponent_label):
+def printable_html(sc, opponent_label, hidden=None):
     """A compact, print-ready ONE-PAGE scouting sheet (browser → Print → PDF).
     Zero dependencies; intentionally small and simple — no branding band, bars or
     badges, four factors and zones sit side by side to keep it to a page."""
@@ -236,45 +242,107 @@ def printable_html(sc, opponent_label):
     except Exception:
         today = ""
 
+    hidden = hidden or set()
+
+    def _show(k):
+        return k not in hidden
+
     trk = sc["trk"]
     rng = (f"ORtg {trk['ORtg']:.0f} · DRtg {trk['DRtg']:.0f} · "
            f"Net {trk['NetRtg']:+.0f} · Pace {trk['Pace']:.0f}") if trk else ""
 
-    rows_f = ""
-    for f in sc["factors"]:
-        if f["value"] is None:
-            continue
-        p = f["pct"]
-        rows_f += (f"<tr><td>{e(f['label'])}</td><td class='n'>{f['value']:.1f}</td>"
-                   f"<td class='n'>{('%.0f' % p) if p is not None else '—'}</td></tr>")
+    # ── keys: how to guard / attack ──
+    keys_html = ""
+    if _show("keys"):
+        guard = "".join(f"<li>{e(x)}</li>" for x in sc["guard"]) or "<li>—</li>"
+        attack = "".join(f"<li>{e(x)}</li>" for x in sc["attack"]) or "<li>—</li>"
+        keys_html = (f"<table class='cols'><tr>"
+                     f"<td class='col'><h2>Guard them</h2><ul>{guard}</ul></td>"
+                     f"<td class='col'><h2>Attack them</h2><ul>{attack}</ul></td>"
+                     f"</tr></table>")
 
-    guard = "".join(f"<li>{e(x)}</li>" for x in sc["guard"]) or "<li>—</li>"
-    attack = "".join(f"<li>{e(x)}</li>" for x in sc["attack"]) or "<li>—</li>"
+    # ── four factors + shooting by zone (share one row) ──
+    ff_cell = ""
+    if _show("four_factors"):
+        rows_f = ""
+        for f in sc["factors"]:
+            if f["value"] is None:
+                continue
+            p = f["pct"]
+            rows_f += (f"<tr><td>{e(f['label'])}</td>"
+                       f"<td class='n'>{f['value']:.1f}</td>"
+                       f"<td class='n'>{('%.0f' % p) if p is not None else '—'}</td></tr>")
+        ff_cell = ("<td class='two-col'><h2>Four factors</h2><table><tr>"
+                   "<th>Factor</th><th class='n'>Val</th>"
+                   f"<th class='n'>%ile</th></tr>{rows_f}</table></td>")
+    z_cell = ""
+    if _show("zones"):
+        zrows = ""
+        zbt = sc.get("zones_by_type", {})
+        for z in S.ZONES:
+            zz = zbt.get(z, {})
+            for i, (tag, cell) in enumerate((("2", zz.get("2", {})),
+                                             ("3", zz.get("3", {})))):
+                fga, fgm = cell.get("FGA", 0), cell.get("FGM", 0)
+                pct = cell.get("pct", 0)
+                fg = f"{fgm}/{fga} · {pct:.0f}%" if fga else "—"
+                lab = (f"<td rowspan='2'><b>{e(ZONE_LABELS[z])}</b></td>"
+                       if i == 0 else "")
+                zrows += f"<tr>{lab}<td>{tag}P</td><td class='n'>{fg}</td></tr>"
+        z_cell = ("<td class='two-col'><h2>Shooting by zone</h2><table><tr>"
+                  "<th>Zone</th><th>Type</th>"
+                  f"<th class='n'>FG · %</th></tr>{zrows}</table></td>")
+    two_html = (f"<table class='two'><tr>{ff_cell}{z_cell}</tr></table>"
+                if (ff_cell or z_cell) else "")
 
-    pers = ""
-    for p in sc["personnel"]:
-        fgp = f"{p['fg']:.0f}" if p.get("fg") is not None else "—"
-        tp = f"{p['tp']:.0f}" if p["tp"] is not None else "—"
-        note = e(p["note"]) if p.get("note") else ""
-        pers += (f"<tr><td><b>#{p['num']} {e(p['name'])}</b></td>"
-                 f"<td class='n'>{(p['ppg'] or 0):.1f}</td>"
-                 f"<td class='n'>{(p['rpg'] or 0):.1f}</td>"
-                 f"<td class='n'>{(p['apg'] or 0):.1f}</td>"
-                 f"<td class='n'>{fgp}</td><td class='n'>{tp}</td>"
-                 f"<td class='note'>{note}</td></tr>")
+    # ── personnel: stats row + a full-width second line (shot source + note) ──
+    pers_html = ""
+    if _show("personnel"):
+        _SRC = (("self", "SC"), ("pass", "Pass"), ("screen", "Screen"),
+                ("both", "Both"))
+        pers = ""
+        for p in sc["personnel"]:
+            fgp = f"{p['fg']:.0f}" if p.get("fg") is not None else "—"
+            tp = f"{p['tp']:.0f}" if p["tp"] is not None else "—"
+            pers += (f"<tr><td><b>#{p['num']} {e(p['name'])}</b></td>"
+                     f"<td class='n'>{(p['ppg'] or 0):.1f}</td>"
+                     f"<td class='n'>{(p['rpg'] or 0):.1f}</td>"
+                     f"<td class='n'>{(p['apg'] or 0):.1f}</td>"
+                     f"<td class='n'>{fgp}</td><td class='n'>{tp}</td></tr>")
+            cm = p.get("creation")
+            src = ""
+            if _show("shot_source") and cm:
+                src = "Shots: " + " · ".join(f"{lbl} {cm[k]:.0f}%"
+                                             for k, lbl in _SRC if k in cm)
+            note = e(p["note"]) if p.get("note") else ""
+            line2 = " — ".join(x for x in (src, note) if x)
+            if line2:
+                pers += f"<tr><td colspan='6' class='note'>{line2}</td></tr>"
+        pers_html = ("<h2>Personnel</h2><table><tr><th>Player</th>"
+                     "<th class='n'>PPG</th><th class='n'>RPG</th>"
+                     "<th class='n'>APG</th><th class='n'>FG%</th>"
+                     f"<th class='n'>3P%</th></tr>{pers}</table>")
 
-    zrows = ""
-    zbt = sc.get("zones_by_type", {})
-    for z in S.ZONES:
-        zz = zbt.get(z, {})
-        for i, (tag, cell) in enumerate((("2", zz.get("2", {})),
-                                         ("3", zz.get("3", {})))):
-            fga, fgm = cell.get("FGA", 0), cell.get("FGM", 0)
-            pct = cell.get("pct", 0)
-            fg = f"{fgm}/{fga} · {pct:.0f}%" if fga else "—"
-            lab = (f"<td rowspan='2'><b>{e(ZONE_LABELS[z])}</b></td>"
-                   if i == 0 else "")
-            zrows += f"<tr>{lab}<td>{tag}P</td><td class='n'>{fg}</td></tr>"
+    # ── strengths & exploit (top / bottom factors by league percentile) ──
+    edges_html = ""
+    if _show("edges") and (sc["strengths"] or sc["weaknesses"]):
+        st_li = "".join(f"<li>{e(f['label'])} — {(f['value'] or 0):.1f} "
+                        f"({f['pct']:.0f}th)</li>"
+                        for f in sc["strengths"]) or "<li>—</li>"
+        wk_li = "".join(f"<li>{e(f['label'])} — {(f['value'] or 0):.1f} "
+                        f"({f['pct']:.0f}th)</li>"
+                        for f in sc["weaknesses"]) or "<li>—</li>"
+        edges_html = (f"<table class='cols'><tr>"
+                      f"<td class='col'><h2>Strengths (&ge;70th)</h2><ul>{st_li}</ul></td>"
+                      f"<td class='col'><h2>Exploit (&le;30th)</h2><ul>{wk_li}</ul></td>"
+                      f"</tr></table>")
+
+    # ── scoring leaders (top 3 by PPG; personnel is pre-sorted) ──
+    leaders_html = ""
+    if _show("leaders") and sc["personnel"]:
+        _lead = " · ".join(f"#{p['num']} {e(p['name'])} {(p['ppg'] or 0):.1f} ppg"
+                           for p in sc["personnel"][:3])
+        leaders_html = f"<h2>Scoring leaders</h2><p class='lead'>{_lead}</p>"
 
     return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'>
 <title>Scout · {e(sc['name'])}</title>
@@ -307,21 +375,10 @@ td.two-col{{width:50%;vertical-align:top;border:none;padding:0}}
 <div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·
   Power #{sc['rank']}/{sc['of']}</div>
 <div class='rng'>{e(rng)}</div>
-<table class='cols'><tr>
-  <td class='col'><h2>Guard them</h2><ul>{guard}</ul></td>
-  <td class='col'><h2>Attack them</h2><ul>{attack}</ul></td>
-</tr></table>
-<table class='two'><tr>
-  <td class='two-col'><h2>Four factors</h2>
-    <table><tr><th>Factor</th><th class='n'>Val</th><th class='n'>%ile</th></tr>
-    {rows_f}</table></td>
-  <td class='two-col'><h2>Shooting by zone</h2>
-    <table><tr><th>Zone</th><th>Type</th><th class='n'>FG · %</th></tr>
-    {zrows}</table></td>
-</tr></table>
-<h2>Personnel</h2>
-<table><tr><th>Player</th><th class='n'>PPG</th><th class='n'>RPG</th>
-  <th class='n'>APG</th><th class='n'>FG%</th><th class='n'>3P%</th><th>Note</th></tr>
-{pers}</table>
+{keys_html}
+{edges_html}
+{two_html}
+{leaders_html}
+{pers_html}
 <div class='foot'>Analytics Hub{(' · ' + today) if today else ''}</div>
 </div></body></html>"""

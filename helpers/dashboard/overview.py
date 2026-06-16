@@ -23,19 +23,14 @@ def render(ctx):
     st.caption("Everything about this team at a glance — power ratings, record, "
                "who carries them, the four factors and how they score.")
 
-    # ── coach notes (teams.notes) ───────────────────────────────────────────
-    _curnotes = (query("SELECT notes FROM teams WHERE id=?", (ctx.team_id,))
-                 or [{"notes": ""}])[0].get("notes") or ""
+    # ── coach notes (PER-COACH + private — was the global teams.notes) ────────
+    import helpers.scoutboard as SB
+    _curnotes = SB.get_note(ctx.team_id, "team")
     with st.expander("📝 Team notes" + (" — saved" if _curnotes else ""),
                      expanded=bool(_curnotes)):
-        _newnotes = st.text_area(
-            "Notes", value=_curnotes, key=f"tn_{ctx.team_id}",
-            label_visibility="collapsed",
-            placeholder="Scouting notes, reminders, season context… saved to this "
-                        "team and shown here next time.")
-        if st.button("Save notes", key=f"tn_save_{ctx.team_id}"):
-            execute("UPDATE teams SET notes=? WHERE id=?", (_newnotes, ctx.team_id))
-            st.success("Saved.")
+        SB.render_notes(ctx.team_id, kind="team", key_prefix="tn", label="Notes",
+                        placeholder="Scouting notes, reminders, season context… "
+                                    "private to you, shown here next time.")
 
     _mprof = MB.manual_team_profile(ctx.team_id)
     if _mprof:
@@ -52,7 +47,8 @@ def render(ctx):
     _bytype = {}
     for r in query("""SELECT game_type, team1_id, home_score, away_score FROM games
                       WHERE (team1_id=? OR team2_id=?) AND home_score IS NOT NULL
-                        AND away_score IS NOT NULL""", (ctx.team_id, ctx.team_id)):
+                        AND away_score IS NOT NULL AND season='Current'""",
+                   (ctx.team_id, ctx.team_id)):
         won = ((r["home_score"] > r["away_score"]) if r["team1_id"] == ctx.team_id
                else (r["away_score"] > r["home_score"]))
         d = _bytype.setdefault(r["game_type"] or "Regular", [0, 0])

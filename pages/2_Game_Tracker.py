@@ -755,21 +755,15 @@ else:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.expander("📋 Team Notes", expanded=False):
+    import helpers.scoutboard as SB
+    st.caption("Private to you — each coach keeps their own notes.")
     notes_col1, notes_col2 = st.columns(2)
     for col, tid, tname in [(notes_col1, t1id, t1name), (notes_col2, t2id, t2name)]:
         with col:
             st.markdown(f"**{tname}**")
-            cur = query("SELECT notes FROM teams WHERE id=?", (tid,))
-            existing_note = cur[0]["notes"] if cur else ""
-            new_note = st.text_area(
-                "Notes", value=existing_note, height=180,
-                placeholder="Scouting notes, tendencies, game plan…",
-                key=f"gt_notes_{game_id}_{tid}",
-                label_visibility="collapsed",
-            )
-            if st.button("💾 Save", key=f"gt_save_notes_{game_id}_{tid}", type="primary"):
-                execute("UPDATE teams SET notes=? WHERE id=?", (new_note, tid))
-                st.success("Saved.")
+            SB.render_notes(tid, kind="team", key_prefix=f"gt_{game_id}",
+                            label="Notes", height=180,
+                            placeholder="Scouting notes, tendencies, game plan…")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  QUICK ADD — spreadsheet style

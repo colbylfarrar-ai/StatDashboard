@@ -298,15 +298,27 @@ def kpi(col, label, value, delta=None, help=None, delta_color="normal"):
 # widget so no page breaks. Single source so the rich-table / chart-export look is
 # identical everywhere — the display mirror of the "degrade gracefully" rule.
 
-def grid(df, key, *, height=480, page_size=25, fit_columns=False):
+def grid(df, key, *, height=480, page_size=25, fit_columns=False, pin_first=True):
     """Sortable, per-column-filter table via streamlit-aggrid; native
     ``st.dataframe`` fallback. ``key`` must be unique per call. Use for any dense,
     explorable table (rankings, stat dumps) where the user benefits from in-grid
-    sort/filter the static dataframe can't give."""
+    sort/filter the static dataframe can't give.
+
+    Readability defaults (laptop + phone): headers WRAP instead of truncating to
+    "Abc…", a per-column minimum width keeps values from clipping to "1…" (the grid
+    scrolls horizontally past the viewport rather than squishing every column), and
+    the first column (the identity — name/team) is PINNED left so it stays visible
+    while you scroll the stat columns. Pass ``pin_first=False`` for a narrow /
+    single-entity table where pinning just wastes space."""
     try:
         from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
         gob = GridOptionsBuilder.from_dataframe(df)
-        gob.configure_default_column(filter=True, sortable=True, resizable=True)
+        gob.configure_default_column(
+            filter=True, sortable=True, resizable=True,
+            minWidth=74, wrapHeaderText=True, autoHeaderHeight=True)
+        if pin_first and len(df.columns):
+            # Identity column: pin left + a touch wider so names aren't clipped.
+            gob.configure_column(df.columns[0], pinned="left", minWidth=132)
         gob.configure_pagination(paginationAutoPageSize=False,
                                  paginationPageSize=page_size)
         # NO_UPDATE: sort/filter/page clicks stay inside the grid iframe instead

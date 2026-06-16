@@ -89,25 +89,68 @@ STYLE_PRESETS = {
 #  READ / WRITE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_setting(key: str, default: str = "") -> str:
+# PER-COACH preferences: these keys are namespaced to the signed-in coach so one
+# coach's theme / default team doesn't change another's. Everything else
+# (data_version, active_season, team_color::*, migration markers) stays GLOBAL.
+# Stored as "u:<email>:<key>"; a coach with no override inherits the global value.
+USER_SCOPED = {"default_team", "accent_color", "color_scheme", "app_style",
+               "wide_mode", "scout_hidden_sections"}
+
+
+def _scope_email() -> str:
+    """The signed-in coach who owns per-user settings. '' = no auth / not logged in
+    yet → falls back to the shared/global bucket (today's single-coach behaviour)."""
+    try:
+        u = st.session_state.get("auth_user")
+        if u and u.get("email"):
+            return u["email"].strip().lower()
+    except Exception:
+        pass
+    try:
+        if getattr(st.user, "is_logged_in", False):
+            return (getattr(st.user, "email", "") or "").strip().lower()
+    except Exception:
+        pass
+    return ""
+
+
+def _ukey(key: str, email: str) -> str:
+    return f"u:{email}:{key}" if (email and key in USER_SCOPED) else key
+
+
+def get_setting(key: str, default: str = "", email=None) -> str:
+    email = _scope_email() if email is None else email
+    # user-scoped key: prefer this coach's value, else fall through to the global one
+    if email and key in USER_SCOPED:
+        rows = query("SELECT value FROM app_settings WHERE key=?",
+                     (_ukey(key, email),))
+        if rows:
+            return rows[0]["value"]
     rows = query("SELECT value FROM app_settings WHERE key=?", (key,))
     if rows:
         return rows[0]["value"]
     return default if default else DEFAULTS.get(key, "")
 
 
-def set_setting(key: str, value: str) -> None:
+def set_setting(key: str, value: str, email=None) -> None:
+    email = _scope_email() if email is None else email
     execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?,?)",
-        (key, value),
+        (_ukey(key, email), value),
     )
 
 
-def get_all_settings() -> dict:
-    rows = query("SELECT key, value FROM app_settings")
-    s = dict(DEFAULTS)          # start with defaults
-    for r in rows:
-        s[r["key"]] = r["value"]
+def get_all_settings(email=None) -> dict:
+    email = _scope_email() if email is None else email
+    s = dict(DEFAULTS)                       # start with defaults
+    for r in query("SELECT key, value FROM app_settings"):
+        if not r["key"].startswith("u:"):    # global values + non-scoped keys
+            s[r["key"]] = r["value"]
+    if email:                                # overlay THIS coach's scoped values
+        prefix = f"u:{email}:"
+        for r in query("SELECT key, value FROM app_settings WHERE key LIKE ?",
+                       (prefix + "%",)):
+            s[r["key"][len(prefix):]] = r["value"]
     return s
 
 

@@ -6,8 +6,22 @@ import pandas as pd
 import streamlit as st
 from database.db import query, execute, normalize_date
 from helpers.ui import page_chrome, page_header
+import helpers.seasons as SZ
+import helpers.auth as AUTH
+import helpers.change_requests as CR
 
 _cfg, ACCENT = page_chrome("Input Hub")
+_me = AUTH.current_user()
+
+
+def _gated_delete(table, target_id, label):
+    """Admin deletes now; a coach's delete is queued for admin approval (the row
+    stays live until accepted). Returns True if the caller should delete now."""
+    if CR.should_delete_now(_me):
+        return True
+    CR.request_delete(table, target_id, label, _me.get("email", ""))
+    st.toast(f"Delete of {label} sent to the admin for approval 🕓")
+    return False
 
 page_header("Input Hub")
 
@@ -165,19 +179,30 @@ def flash(level, msg):
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.expander("New Season", expanded=False):
+    _cur_label = SZ.active_label()
     st.warning(
-        "Rolling over archives all current players and schedules under a season label, "
-        "then starts fresh. Historical game data and tracked stats are always preserved."
+        f"Current season: **{_cur_label}**. Rolling over archives all current "
+        "players, schedules **and games** under that label, then starts a fresh "
+        "season. Nothing is deleted — past seasons become an open archive (free, "
+        "full depth, visible to everyone), and current-season stats stop blending "
+        "with last year's."
     )
-    season_label = st.text_input("Season label (e.g. 2024-25)", placeholder="2024-25", key="season_label_input")
+    new_name = st.text_input("New season name (e.g. 2026-2027)",
+                             placeholder="2026-2027", key="season_label_input")
     confirm = st.checkbox("I understand — roll over to a new season", key="new_season_confirm")
-    can_go = confirm and bool(season_label.strip())
+    _nm = new_name.strip()
+    can_go = confirm and bool(_nm) and _nm != _cur_label
     if st.button("Start New Season", type="primary", disabled=not can_go, key="new_season_btn"):
-        lbl = season_label.strip()
-        execute("UPDATE players SET archived=1, season=? WHERE archived=0", (lbl,))
-        execute("UPDATE schedule SET season=? WHERE season='Current'", (lbl,))
+        # Stamp the OUTGOING season's rows with its real label; new rows added
+        # after this default back to 'Current' = the new active season.
+        execute("UPDATE players  SET archived=1, season=? WHERE archived=0", (_cur_label,))
+        execute("UPDATE schedule SET season=? WHERE season='Current'", (_cur_label,))
+        execute("UPDATE games    SET season=? WHERE season='Current'", (_cur_label,))
+        execute("INSERT OR REPLACE INTO app_settings (key, value) "
+                "VALUES ('active_season', ?)", (_nm,))
         invalidate("_players_orig", "players_editor", "_sched_orig", "sched_editor")
-        flash("success", f"Season '{lbl}' archived. Add new rosters and schedules to start fresh.")
+        flash("success", f"Archived '{_cur_label}'. Now playing **{_nm}** — add new "
+              "rosters and schedules to start fresh.")
         st.cache_data.clear()
         st.rerun()
 
@@ -218,7 +243,8 @@ with tab_teams:
             execute("UPDATE teams SET name=?, class=?, gender=? WHERE id=?",
                     (r["name"].strip(), r["class"], r["gender"], r["id"]))
         def del_team(r):
-            execute("DELETE FROM teams WHERE id=?", (r["id"],))
+            if _gated_delete("teams", r["id"], f"team '{r.get('name','?')}'"):
+                execute("DELETE FROM teams WHERE id=?", (r["id"],))
 
         errs = apply_delta("teams_editor", orig, ins_team, upd_team, del_team)
         if errs:
@@ -283,7 +309,8 @@ with tab_players:
                      r["id"])
                 )
             def del_player(r):
-                execute("DELETE FROM players WHERE id=?", (r["id"],))
+                if _gated_delete("players", r["id"], f"player '{r.get('name','?')}'"):
+                    execute("DELETE FROM players WHERE id=?", (r["id"],))
 
             errs = apply_delta("players_editor", orig, ins_player, upd_player, del_player)
             if errs:
@@ -373,7 +400,9 @@ with tab_games:
                      (r.get("video_url") or "").strip(), r["id"])
                 )
             def del_game(r):
-                execute("DELETE FROM games WHERE id=?", (r["id"],))
+                if _gated_delete("games", r["id"],
+                                 f"game {r.get('team1','?')} vs {r.get('team2','?')}"):
+                    execute("DELETE FROM games WHERE id=?", (r["id"],))
 
             errs = apply_delta("games_editor", orig, ins_game, upd_game, del_game)
             if errs:
@@ -492,7 +521,9 @@ with tab_schedule:
                 )
 
             def del_sched(r):
-                execute("DELETE FROM games WHERE id=?", (r["id"],))
+                if _gated_delete("games", r["id"],
+                                 f"scheduled game {r.get('team1','?')} vs {r.get('team2','?')}"):
+                    execute("DELETE FROM games WHERE id=?", (r["id"],))
 
             errs = apply_delta("sched_editor", orig, ins_sched, upd_sched, del_sched)
             if errs:
@@ -533,7 +564,8 @@ with tab_officials:
             execute("UPDATE officials SET name=?, official_id=? WHERE id=?",
                     (r["name"].strip(), int(r["official_id"]), r["id"]))
         def del_official(r):
-            execute("DELETE FROM officials WHERE id=?", (r["id"],))
+            if _gated_delete("officials", r["id"], f"official '{r.get('name','?')}'"):
+                execute("DELETE FROM officials WHERE id=?", (r["id"],))
 
         errs = apply_delta("officials_editor", orig, ins_official, upd_official, del_official)
         if errs:

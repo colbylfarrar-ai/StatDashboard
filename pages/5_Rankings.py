@@ -52,17 +52,18 @@ _cfg, ACCENT = page_chrome("Rankings")
 
 
 def _paid_pool_lock():
-    """Lock reason for a LEAGUE-WIDE tracked surface (every team's possession
-    data at once), or None if the viewer may see it. Needs Paid + league pool —
-    see helpers.entitlement.viewer_in_pool."""
+    """Lock reason for a LEAGUE-WIDE tracked surface (the whole pool's possession
+    data at once), or None if the viewer may see it. Needs Paid AND League-wide
+    (the per-coach Coaches' Co-op toggle) — a Solo coach gets an INVITE to share,
+    not a denial. See helpers.entitlement.viewer_is_league_wide."""
     _ident = AUTH.current_user()
     if not ENT.has_paid_plan(_ident):
         return ("🔒 Tracked league analytics — possession ratings, four factors "
                 "and the advanced charts — are a **Paid** feature. Upgrade to "
                 "unlock.")
-    if not ENT.viewer_in_pool(_ident):
-        return ("🔒 Seeing every team's tracked ratings needs the **league pool** "
-                "— turn on the league toggle for your team in Settings.")
+    if not ENT.viewer_is_league_wide(_ident):
+        return (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_ident)
+                else ENT.MSG_COOP_INVITE)
     return None
 
 # futuristic-lab palette (mirrors the Team Analytics advanced layer)
@@ -198,16 +199,22 @@ def _pctile_bar(label, val_txt, pct):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _team_tracked_deep(team_id):
+def _team_tracked_deep(team_id, vis=None):
     """Possession-based tracked deep dive for one team — None if no tracked games.
 
     Mirrors (and extends) APP3's 'Team Deep Dive': pace-adjusted ratings, the
     four factors on both ends, a per-period PPG/PPP table and a per-game
     efficiency log that drives the win/loss pattern charts. Everything is built
     from tracked play-by-play, so it is a small, directional sample.
+
+    `vis` (tuple of game ids, or None) is the AXIS-2 read-filter: None for own
+    team / admin (full depth); a League-wide scout passes the team's POOLED games.
     """
     game_log = TA.team_game_log(team_id)
     tracked_ids = [g["game_id"] for g in game_log if g["tracked"]]
+    if vis is not None:
+        _vis = set(vis)
+        tracked_ids = [gid for gid in tracked_ids if gid in _vis]
     if not tracked_ids:
         return None
     events = S.fetch_events(tracked_ids)
@@ -274,8 +281,12 @@ def _score_ratings(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _tracked_ratings(g):
-    return TR.tracked_ratings(gender=g)
+def _tracked_ratings(g, vis=None):
+    # `vis` (tuple of game ids, or None) is the AXIS-2 read-filter: the whole
+    # tracked surface here is league-wide, so it aggregates only games the viewer
+    # may see (None = admin/local = all; a League-wide coach = the pooled set).
+    return TR.tracked_ratings(gender=g,
+                              game_ids=(set(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -284,8 +295,9 @@ def _form_stats(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _tracked_pack(g, _tracked):
-    return LA.team_tracked_pack(gender=g, tracked=_tracked)
+def _tracked_pack(g, _tracked, vis=None):
+    return LA.team_tracked_pack(gender=g, tracked=_tracked,
+                                game_ids=(set(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -310,8 +322,10 @@ TOP5 = {tid for tid, r in scored.items() if r["Rank"] <= 5}
 TOP10 = {tid for tid, r in scored.items() if r["Rank"] <= 10}
 TOP25 = {tid for tid, r in scored.items() if r["Rank"] <= 25}
 
-# tracked advanced bundle (one cached box pass) — shared by League Lab tab
-pack = _tracked_pack(gender, tracked)
+# tracked advanced bundle (one cached box pass) — shared by League Lab tab.
+# Pool-scoped to the viewer (_VISK) so the league-wide charts never surface a
+# Solo coach's tracked depth.
+pack = _tracked_pack(gender, tracked, _VISK)
 
 (tab_over, tab_team, tab_cmp, tab_track, tab_chart, tab_evr,
  tab_gloss) = st.tabs(
@@ -728,16 +742,23 @@ def _fx_team():
 
     # ── Tracked deep dive (possession-based, tracked games only) ─────────────
     _lab_hdr("Tracked deep dive")
-    # Single-team tracked depth: own team (Paid) always; another team needs the
-    # league pool on both sides. This is the last section of _fx_team, so a
-    # locked viewer just gets the message and we return.
-    if not ENT.can_see_team_tracked(AUTH.current_user(), pick):
-        st.info("🔒 The tracked deep dive — possession ratings, four factors, "
-                "quarter PPP and win/loss patterns — is **Paid** for your own "
-                "team; scouting another team's tracked depth needs the league "
-                "pool (both teams opted in).")
+    # Single-team tracked depth (AXIS 1 + AXIS 2): own team (Paid) always; another
+    # team only when you're League-wide AND it has shared (pooled) tracked games —
+    # a Solo coach gets the co-op invite, a non-shared team a neutral note. This is
+    # the last section of _fx_team, so a locked viewer just gets the message + return.
+    _ident = AUTH.current_user()
+    _raw_trk = bool(query("SELECT 1 FROM games WHERE (team1_id=? OR team2_id=?) "
+                          "AND tracked=1 LIMIT 1", (pick, pick)))
+    _ok, _lock = ENT.tracked_gate(_ident, pick, _raw_trk)
+    if not _ok:
+        if _lock:
+            st.info(_lock)
+        else:
+            empty_state("No tracked games for this team yet",
+                        "Track a game in the Game Tracker to unlock the deep dive.")
         return
-    _deep = _team_tracked_deep(pick)
+    _dv = ENT.team_visible_tracked_ids(_ident, pick)
+    _deep = _team_tracked_deep(pick, None if _dv is None else tuple(sorted(_dv)))
     if not _deep:
         empty_state("No tracked games for this team yet",
                     "Track a game in the Game Tracker to unlock possession "
@@ -1941,9 +1962,10 @@ def _fx_cmp():
                        "margin breakdown and simulation live in the War Room.")
 
         _ma, _mb = _cts.get(cA), _cts.get(cB)
-        # The tracked profile reveals BOTH teams' possession depth side by side,
-        # so require entitlement to each (own team Paid; another team via the
-        # league pool) — stricter than either-team can_see_game_tracked.
+        # The tracked profile reveals BOTH teams' possession depth side by side, so
+        # require entitlement to each (own team Paid; another team needs you to be
+        # League-wide). The read-filter already strips non-pooled teams from `_cts`,
+        # so a missing _ma/_mb falls through to the neutral "both tracked" note.
         _cmp_ident = AUTH.current_user()
         _cmp_ok = (ENT.can_see_team_tracked(_cmp_ident, cA)
                    and ENT.can_see_team_tracked(_cmp_ident, cB))
@@ -1960,8 +1982,9 @@ def _fx_cmp():
                 _trow("Points / poss", _ma["PPP"], _mb["PPP"], fmt="{:.2f}"),
             ]), unsafe_allow_html=True)
         elif _ma and _mb and not _cmp_ok:
-            st.info("🔒 The tracked four-factor & efficiency compare is **Paid**, "
-                    "and needs the league pool for any team that isn't yours.")
+            st.info("🔒 The tracked four-factor & efficiency compare is **Paid**. "
+                    "Join the **Coaches' Co-op** (Settings) to scout any team but "
+                    "your own — share to scout.")
         else:
             st.info("Four-factor & efficiency compare needs both teams tracked.")
 

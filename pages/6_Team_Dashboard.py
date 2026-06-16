@@ -443,8 +443,12 @@ team_id = c2.selectbox("Team", order_ids, index=default_idx,
 team = team_by_id[team_id]
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _team_bundle(tid, g):
-    return TA.team_bundle(tid, gender=g, min_games=1)
+def _team_bundle(tid, g, vis=None):
+    # `vis` (tuple of game ids, or None) is the entitlement read-filter: None for
+    # own team / admin (full depth); a League-wide coach scouting another team
+    # passes that team's POOLED game ids so its Solo-tracked games stay private.
+    return TA.team_bundle(tid, gender=g, min_games=1,
+                          visible_game_ids=(set(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -586,7 +590,7 @@ def _gender_tracked_ids(g):
     """All tracked, completed game ids for a gender (the RAPM/WPA possession pool)."""
     rows = query(
         """SELECT g.id FROM games g JOIN teams t ON t.id = g.team1_id
-           WHERE g.tracked = 1 AND g.home_score IS NOT NULL
+           WHERE g.tracked = 1 AND g.season = 'Current' AND g.home_score IS NOT NULL
              AND g.away_score IS NOT NULL AND t.gender = ?""", (g,))
     return [r["id"] for r in rows]
 
@@ -629,14 +633,24 @@ def _units(tid, _tids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _scout(tid, g, limit=7, excl=()):
+def _scout(tid, g, limit=7, excl=(), vis=None):
+    # `vis` (tuple of game ids, or None) scopes the hot-zone / shot-creation views
+    # to what the viewer may see (None = own team / admin = full depth).
     trk = _tracked_ratings(g)
     return SC.build_scout(tid, g, _score_ratings(g), trk,
                           _pack(g, trk), _ptable_full(g),
-                          personnel_limit=limit, exclude_pids=set(excl))
+                          personnel_limit=limit, exclude_pids=set(excl),
+                          visible_game_ids=(set(vis) if vis is not None else None))
 
 
-bundle = _team_bundle(team_id, gender)
+# Entitlement read-filter (AXIS-2 teeth): which of this team's tracked games may
+# the viewer aggregate. None = own team / admin (full depth); a League-wide coach
+# scouting another team gets only that team's POOLED games, so its Solo-tracked
+# games stay private. Threaded into the bundle + scout so the page's tracked depth
+# is computed over exactly the visible set.
+_vis = ENT.team_visible_tracked_ids(AUTH.current_user(), team_id)
+_vis_key = None if _vis is None else tuple(sorted(_vis))
+bundle = _team_bundle(team_id, gender, _vis_key)
 log = bundle["game_log"]
 rec = bundle["record"]
 players = bundle["players"]
@@ -648,11 +662,13 @@ bd = bundle["breakdown"]
 summ = bundle["summary"]
 sc_score = scored.get(team_id, {})
 sc_track = tracked.get(team_id, {})
-# Tier gate: Paid sees tracked depth on their own team always, on other teams
-# only when both are in the league pool; Free sees box-score only. This single
-# has_tracked flag flows to ctx.has_tracked and ~17 downstream sites, so gating
-# it here gates the whole dashboard for the viewed team in one place.
-_raw_tracked = bool(bundle["tracked_ids"])
+# Tier gate (AXIS 1 + AXIS 2): Free → box only; Paid → own team always, another
+# team only when League-wide AND that team has shared (pooled) tracked games —
+# else a neutral "hasn't shared" note. This single has_tracked flag flows to
+# ctx.has_tracked and ~17 downstream sites, gating the whole dashboard in one
+# place. raw_has_tracked reads the UNFILTERED game_log (box level) so the gate
+# can tell "no tracked data" apart from "tracked but not shared with you".
+_raw_tracked = any(g["tracked"] for g in bundle["game_log"])
 has_tracked, _tracked_lock = ENT.tracked_gate(AUTH.current_user(), team_id, _raw_tracked)
 # one helper, both rankings: 'overall' (everything / results-only) + 'tracked'
 rank_info = TR.team_rank(team_id, scored=scored, tracked=tracked)
@@ -3417,7 +3433,11 @@ _scout_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                              gender=gender, has_tracked=has_tracked,
                              summ=summ, soff=soff, brk=brk, ff=ff, tb=tb,
                              GOOD=GOOD, BAD=BAD, ACCENT=ACCENT, BLUE=BLUE,
-                             style=_style, pctf=_pctf, scout=_scout,
+                             style=_style, pctf=_pctf,
+                             # scout always targets the selected team → reuse its
+                             # visible-game key (the AXIS-2 read-filter).
+                             scout=lambda _t, _g, _lim, _ex: _scout(
+                                 _t, _g, _lim, _ex, _vis_key),
                              archetypes=_archetypes, located_team=_located_team,
                              zone_pair_bars=_zone_pair_bars)
 with tab_scout:

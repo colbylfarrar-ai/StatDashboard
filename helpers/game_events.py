@@ -236,6 +236,12 @@ def finish_game(game_id: int) -> tuple:
     hp, ap = score_from_events(game_id) or (0, 0)
     execute("UPDATE games SET tracked=1, home_score=?, away_score=? WHERE id=?",
             (hp, ap, game_id))
+    # Denormalize the pooled flag from the logging coach's Co-op toggle so the
+    # read-path (entitlement.pooled_game_ids) sees it without a join. Recomputed
+    # here in case tracked_by was already stamped; the tracker API refreshes again
+    # after it stamps attribution on the finish call.
+    from helpers.entitlement import recompute_game_pool
+    recompute_game_pool(game_id)
     # The desktop tracker's persisted on-court five is dead weight once the
     # game is final — drop it so app_settings doesn't accumulate one row per
     # game forever.

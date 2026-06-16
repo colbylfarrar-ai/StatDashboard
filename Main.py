@@ -106,7 +106,7 @@ def _dashboard(gender):
         if table:
             gbox = S.player_game_boxes()
             gdates = {r["id"]: r["date"] for r in query(
-                "SELECT id, date FROM games WHERE tracked=1")}
+                "SELECT id, date FROM games WHERE tracked=1 AND season='Current'")}
             top_sc = sorted(table.values(),
                             key=lambda r: -(r["PPG"] if r.get("PPG") is not None
                                             else 0))[:10]
@@ -131,7 +131,8 @@ def _dashboard(gender):
     try:
         # game of the season (highest GEI)
         best = None
-        for gid in [r["id"] for r in query("SELECT id FROM games WHERE tracked=1")]:
+        for gid in [r["id"] for r in query(
+                "SELECT id FROM games WHERE tracked=1 AND season='Current'")]:
             g = query("""SELECT g.team1_id t1, g.team2_id t2, t1.name n1, t2.name n2,
                                 g.home_score hs, g.away_score aws,
                                 t1.gender gen FROM games g

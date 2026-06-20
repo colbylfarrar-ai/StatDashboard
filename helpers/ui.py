@@ -542,6 +542,30 @@ def chart_select(fig, *, key, selection_mode="points", on_select="rerun",
         return None
 
 
+def court_panel(fig, *, key, df=None, selection_mode="points"):
+    """Render a shot-court figure as a cross-filter INPUT: tap shots/hexes and the
+    Plotly selection comes back so the caller can slice the table/box beside it.
+    Returns the selection dict (or None). Thin wrapper over ``chart_select`` so
+    every court that wants drill-down behaves the same."""
+    return chart_select(fig, key=key, selection_mode=selection_mode, data=df)
+
+
+def selected_xy(selection):
+    """Pull ``[(x, y), …]`` out of a plotly ``on_select`` payload (returned by
+    ``court_panel``/``chart_select``), robust to the few shapes Streamlit uses.
+    Empty list when nothing is selected."""
+    if not selection:
+        return []
+    sel = selection.get("selection") if isinstance(selection, dict) else None
+    pts = (sel or {}).get("points") if isinstance(sel, dict) else None
+    out = []
+    for p in (pts or []):
+        x, y = p.get("x"), p.get("y")
+        if x is not None and y is not None:
+            out.append((x, y))
+    return out
+
+
 # ── Signature HTML tiles (return strings; caller wraps with st.markdown) ──────
 def _tile(cls, label, value, sub, label_cls, value_cls, tier_class, color):
     vc = f" {tier_class}" if tier_class else ""

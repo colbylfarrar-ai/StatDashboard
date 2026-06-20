@@ -296,6 +296,7 @@ with t_shots:
             format_func=lambda kv: f"{kv[1]['name']} · {kv[1].get('team', '')}")
         kw["player_id"] = psel[0]
     ctype = cc[2].radio("Chart", ["Hexbin (volume + PPS)",
+                                  "Points over expected",
                                   "Expected points surface", "Scatter"],
                         key="sm_ctype")
     approx = cc[3].checkbox("Zone-approx", value=True, key="sm_approx",
@@ -319,6 +320,15 @@ with t_shots:
             st.plotly_chart(fig, width="stretch", key="sm_hex")
             st.caption("Hexagon size = shots from that spot; colour = points per "
                        f"shot (green above league {lpps:.2f}, red below).")
+        elif ctype.startswith("Points"):
+            model = _shot_model(approx)
+            fig, _n = court.shot_hexbin(shots, title="Points over expected",
+                                        model=model, mode="poe")
+            st.plotly_chart(fig, width="stretch", key="sm_poe")
+            st.caption("Hexagon size = shot volume; colour = points per shot "
+                       "ABOVE / BELOW what the league make-rate model expects "
+                       "from that spot (green = beating the shot's difficulty, "
+                       "red = below). Shot *quality*, not just makes.")
         elif ctype.startswith("Expected"):
             model = _shot_model(approx)
             fig = court.expected_points_surface(model, shots=shots, overlay=True,

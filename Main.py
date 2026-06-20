@@ -86,7 +86,7 @@ def _dashboard(gender):
         ptr = LA.per_team_results(gender)
         d["leaders"] = [{
             "Rank": s["Rank"], "Team": s["name"], "W": s["W"], "L": s["L"],
-            "Power": s["Power"], "Net": s["AdjNet"],
+            "Power": s["Power"], "Net": s["AdjNet"], "tid": id_of.get(id(s)),
             "Form": [g["margin"] for g in ptr.get(id_of.get(id(s)), [])[-7:]],
         } for s in order[:12]]
     except Exception as e:
@@ -125,7 +125,7 @@ def _dashboard(gender):
                         gbox[pid].items(), key=lambda kv: gdates.get(kv[0], ""))]
                 rows.append({"Player": r["name"], "Team": r["team"],
                              "PPG": r.get("PPG"), "OVR": r.get("OVERALL"),
-                             "Trend": series})
+                             "Trend": series, "pid": pid})
             d["scorer_rows"] = rows
     except Exception as e:
         _fail("Scoring leaders", e)
@@ -336,9 +336,14 @@ else:
     with col[2]:
         st.markdown("<div class='lab-hdr'>Power rankings</div>", unsafe_allow_html=True)
         if D["leaders"]:
-            df = pd.DataFrame([{"Rank": r["Rank"], "Team": r["Team"],
-                                "Rec": f"{r['W']}-{r['L']}", "Power": r["Power"],
-                                "Form": r["Form"]} for r in D["leaders"]])
+            df = pd.DataFrame([{
+                "Rank": r["Rank"], "Team": r["Team"],
+                "Rec": f"{r['W']}-{r['L']}", "Power": r["Power"],
+                "Form": r["Form"],
+                # relative deep-link → Team Dashboard preselected on this team
+                "Open": (f"Team_Dashboard?team={r['tid']}"
+                         if r.get("tid") is not None else None),
+            } for r in D["leaders"]])
             st.dataframe(
                 df, hide_index=True, width="stretch", key="lb_power",
                 column_config={
@@ -346,14 +351,23 @@ else:
                         "Power", format="%.0f", min_value=0, max_value=100),
                     "Form": st.column_config.LineChartColumn(
                         "Margin trend", y_min=-30, y_max=30),
+                    "Open": st.column_config.LinkColumn(
+                        "", display_text="↗", width="small"),
                 })
 
         st.markdown("<div class='lab-hdr'>Scoring leaders</div>", unsafe_allow_html=True)
         if D["scorer_rows"]:
             sdf = pd.DataFrame(D["scorer_rows"])
+            # deep-link each scorer to their Player Lab profile, then hide the id
+            if "pid" in sdf.columns:
+                sdf["Open"] = sdf["pid"].apply(
+                    lambda p: f"Players?player={int(p)}" if pd.notna(p) else None)
+                sdf = sdf.drop(columns=["pid"])
             # OVERALL is an event-derived rating — drop the OVR column for Free.
             _scfg = {"PPG": st.column_config.NumberColumn("PPG", format="%.1f"),
-                     "Trend": st.column_config.LineChartColumn("PTS by game")}
+                     "Trend": st.column_config.LineChartColumn("PTS by game"),
+                     "Open": st.column_config.LinkColumn("", display_text="↗",
+                                                         width="small")}
             if _paid:
                 _scfg["OVR"] = st.column_config.ProgressColumn(
                     "OVR", format="%.0f", min_value=0, max_value=100)

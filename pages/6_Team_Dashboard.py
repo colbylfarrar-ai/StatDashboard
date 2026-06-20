@@ -437,6 +437,18 @@ def _team_label(t):
 # a gender switch that changes the team list.
 team_by_id = {t["id"]: t for t in order}
 order_ids = [t["id"] for t in order]
+# Deep-link preselect: a ?team=<id> link (from a landing power-ranking row) opens
+# this dashboard already scoped to that team. Applied once per distinct id so the
+# user can still switch teams; ids outside the current gender pool fall through.
+_qp_team = st.query_params.get("team")
+if _qp_team and st.session_state.get("_ta_deeplink") != _qp_team:
+    try:
+        _dl_tid = int(_qp_team)
+    except (TypeError, ValueError):
+        _dl_tid = _qp_team
+    if _dl_tid in order_ids:
+        st.session_state["ta_team"] = _dl_tid
+    st.session_state["_ta_deeplink"] = _qp_team
 team_id = c2.selectbox("Team", order_ids, index=default_idx,
                        format_func=lambda tid: _team_label(team_by_id[tid]),
                        key="ta_team")

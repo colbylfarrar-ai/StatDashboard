@@ -293,6 +293,14 @@ def finish(game_id: int, user: dict = Depends(require_full_user)):
     return {"ok": True, "home": hp, "away": ap}
 
 
+@api.get("/me")
+def whoami(user: dict = Depends(current_api_user)):
+    """The resolved identity — lets the PWA hide full-coach-only controls for a
+    guest "assistant scorer" link (log-only). Guest-allowed (read only)."""
+    return {"email": user.get("email", ""), "role": user.get("role", ""),
+            "plan": user.get("plan", ""), "guest": bool(user.get("guest"))}
+
+
 # ── courtside setup: create game / team, quick-add player / official ───────────
 @api.get("/teams")
 def list_teams():

@@ -1524,8 +1524,27 @@ function bindUI() {
   setInterval(flush, 20000);
 }
 
+// Controls whose endpoints a guest "assistant scorer" link can't call.
+const GUEST_HIDE_IDS = ['btn-new-game', 'btn-add-home', 'btn-add-away',
+  'btn-add-official', 'btn-finish', 'btn-edit-log', 'btn-lineup-edit-log'];
+
+async function applyGuestMode() {
+  // A guest link is log-only — hide create/finish/edit/add controls so the
+  // assistant only sees logging. The server enforces this regardless.
+  try {
+    const r = await api('/api/me');
+    if (!r.ok) return;
+    S.isGuest = !!(await r.json()).guest;
+  } catch (e) { return; }
+  if (!S.isGuest) return;
+  GUEST_HIDE_IDS.forEach(function (id) { const el = $(id); if (el) el.hidden = true; });
+  const s = $('setup-status');
+  if (s) s.textContent = 'Assistant mode — log events only.';
+}
+
 async function init() {
   bindUI();
+  await applyGuestMode();
   updateNetUI();
 
   // restore mid-game state after reload

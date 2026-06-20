@@ -222,6 +222,16 @@ def initialize_database():
             # is unaffected. Captures the literal set call that tempo+creation
             # inference can't derive.
             "ALTER TABLE game_events     ADD COLUMN play_type    TEXT",
+            # "Assistant scorer" guest links (the link IS the token; log-only,
+            # resolves to the owner coach). Separate from app_users.tracker_token
+            # so revoking an assistant never touches the coach's own credential.
+            "CREATE TABLE IF NOT EXISTS tracker_guest_tokens ("
+            " token TEXT PRIMARY KEY, owner_email TEXT NOT NULL,"
+            " label TEXT NOT NULL DEFAULT '',"
+            " created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+            " revoked INTEGER NOT NULL DEFAULT 0)",
+            "CREATE INDEX IF NOT EXISTS idx_guest_tokens_owner "
+            "ON tracker_guest_tokens(owner_email)",
             # Hygiene: rows retyped away from "shot" before update_event learned
             # to clear the tap location kept stale x/y — scrub them so a later
             # flip back to "shot" can't resurrect a wrong court spot.

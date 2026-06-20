@@ -17,6 +17,19 @@ function $(id) { return document.getElementById(id); }
 function lsGet(k, fb) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch (e) { return fb; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
+/* "Assistant scorer" deep link: ?t=<token> saves the token (raw string, same as
+   the manual token field), then strips it from the URL so it isn't left in the
+   address bar or bookmarked. Runs at load, before the first API call. */
+(function () {
+  try {
+    var t = new URLSearchParams(location.search).get('t');
+    if (t) {
+      localStorage.setItem(LS.token, t);
+      history.replaceState(null, '', location.pathname);
+    }
+  } catch (e) {}
+})();
+
 function uuid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {

@@ -938,11 +938,10 @@ def _fx_shot():
                          help=f"{op['FGM']}/{op['FGA']}")
         hb = hsplits.get(pl_pid, {})
         if hb and (hb["dominant"]["all"]["FGA"] or hb["weak"]["all"]["FGA"]):
-            st.caption("**Hand side** — dominant vs weak side (center = straightaway)")
-            dom, wk, ctr = hb["dominant"]["all"], hb["weak"]["all"], hb["center"]["all"]
-            hh = st.columns(3)
-            for col, lbl, c in ((hh[0], "Dominant FG%", dom),
-                                (hh[1], "Weak FG%", wk), (hh[2], "Center FG%", ctr)):
+            st.caption("**Hand side** — dominant vs weak half (dead-center ignored)")
+            dom, wk = hb["dominant"]["all"], hb["weak"]["all"]
+            hh = st.columns(2)
+            for col, lbl, c in ((hh[0], "Dominant FG%", dom), (hh[1], "Weak FG%", wk)):
                 col.metric(lbl, f"{c['pct']*100:.0f}%" if c["FGA"] else "—",
                            help=f"{c['FGM']}/{c['FGA']} FGA")
     st.markdown("**Hot zones**")

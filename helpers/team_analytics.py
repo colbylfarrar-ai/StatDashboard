@@ -866,15 +866,16 @@ def guarded_splits(team_id, game_ids=None, events=None, offense=True):
 
 def hand_splits(team_id, game_ids=None, events=None, hand=None, offense=True):
     """
-    Dominant / weak / center shooting for the team's own shots (offense=True),
-    classified by each shooter's handedness (see helpers/handedness.py: a righty's
-    right-side shots are dominant, left-side weak; center = straightaway zone C).
+    Dominant vs weak hand-side shooting for the team's own shots (offense=True),
+    classified by each shooter's handedness (see helpers/handedness.py): a true
+    half-court split about the center line — a righty's right-half shots are
+    dominant, left-half weak; lefties mirrored; dead-center shots are ignored.
 
     Each bucket carries an agg_shots line plus guarded/open and 2/3 sub-splits, so
     the dashboard can mirror the guarded/zone tables on the hand-side axis:
       {bucket: {'all': agg, 'guarded': agg, 'open': agg, '2': agg, '3': agg}}
-    for bucket in ('dominant','weak','center'), plus 'dom_share' = dominant FGA /
-    (dominant + weak) FGA — the team's side lean, center excluded.
+    for bucket in ('dominant','weak'), plus 'dom_share' = dominant FGA /
+    (dominant + weak) FGA — the team's side lean.
     """
     import helpers.handedness as HD
     if events is None:
@@ -884,9 +885,9 @@ def hand_splits(team_id, game_ids=None, events=None, hand=None, offense=True):
     shots = _team_shots(team_id, events, offense=offense)
     buckets = {b: [] for b in HD.HAND_BUCKETS}
     for s in shots:
-        if not s["zone"]:
+        b = HD.hand_bucket(s.get("shot_x"), s["zone"], hand.get(s["primary_player_id"], "right"))
+        if b is None:                       # dead-center / unclassifiable -> ignore
             continue
-        b = HD.hand_bucket(s["zone"], hand.get(s["primary_player_id"], "right"))
         buckets[b].append(s)
     out = {}
     for b, sh in buckets.items():

@@ -1453,19 +1453,19 @@ def player_zone_guarded(game_ids=None, events=None, player_id=None):
 
 def player_hand_splits(game_ids=None, events=None, player_id=None, hand=None):
     """
-    Per-player shooting split by hand side: dominant / weak / center.
+    Per-player shooting split by hand side: dominant vs weak.
 
-    The shooter's handedness (players.handedness) maps each shot's floor side to a
-    bucket: a righty's right-side shots are "dominant", left-side "weak"; a lefty is
-    mirrored; straightaway (zone C) is "center" and excluded from the dominant↔weak
-    comparison. Each bucket is also split guarded vs open, so the UI can show where a
-    player shoots more, shoots better, and how contested those looks are — a sibling
-    to player_zone_guarded keyed on hand side instead of contest. See
-    helpers/handedness.py for the classification.
+    Each shot's floor side is a true half-court split (tap x when present, else the
+    coarse zone; see helpers/handedness.py). The shooter's handedness maps that side
+    to a bucket: a righty's right-half shots are "dominant", left-half "weak"; a
+    lefty is mirrored. Dead-center shots (x==0, or legacy zone C) are IGNORED. Each
+    bucket is also split guarded vs open, so the UI can show where a player shoots
+    more, shoots better, and how contested those looks are — a sibling to
+    player_zone_guarded keyed on hand side instead of contest.
 
     Returns {player_id: {bucket: {"all":{FGA,FGM,pct}, "guarded":{…}, "open":{…}}}}
-    for bucket in ("dominant","weak","center"). With player_id, returns just that
-    player's dict (zero-filled if they have no located shots).
+    for bucket in ("dominant","weak"). With player_id, returns just that player's
+    dict (zero-filled if they have no classifiable shots).
     """
     import helpers.handedness as HD
     if events is None:
@@ -1480,11 +1480,10 @@ def player_hand_splits(game_ids=None, events=None, player_id=None, hand=None):
     for e in events:
         if e["event_type"] != "shot" or e["primary_player_id"] is None:
             continue
-        z = e["zone"]
-        if not z:
-            continue
         pid = e["primary_player_id"]
-        bucket = HD.hand_bucket(z, hand.get(pid, "right"))
+        bucket = HD.hand_bucket(e.get("shot_x"), e["zone"], hand.get(pid, "right"))
+        if bucket is None:                 # dead-center / unclassifiable -> ignore
+            continue
         d = out.setdefault(pid, {b: _blank() for b in HD.HAND_BUCKETS})
         gkey = "guarded" if e["guarded_by_id"] is not None else "open"
         made = e["shot_result"] == "make"

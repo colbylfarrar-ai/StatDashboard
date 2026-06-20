@@ -1390,8 +1390,7 @@ with tab_charts:
                             unsafe_allow_html=True)
                 st.dataframe(pd.DataFrame([
                     _shot_row("Dominant side", hs["dominant"]["all"], ppf, ftpf),
-                    _shot_row("Weak side", hs["weak"]["all"], ppf, ftpf),
-                    _shot_row("Center", hs["center"]["all"], ppf, ftpf)]),
+                    _shot_row("Weak side", hs["weak"]["all"], ppf, ftpf)]),
                     hide_index=True, width="stretch")
                 hc1, hc2 = st.columns([2, 1])
                 with hc1:
@@ -1399,10 +1398,9 @@ with tab_charts:
                     for lbl, key in [("FG%", "FG%"), ("2P%", "2P%"),
                                      ("3P%", "3P%"), ("eFG%", "eFG")]:
                         hf.add_trace(go.Bar(
-                            name=lbl, x=["Dominant", "Weak", "Center"],
+                            name=lbl, x=["Dominant", "Weak"],
                             y=[hs["dominant"]["all"][key] * 100,
-                               hs["weak"]["all"][key] * 100,
-                               hs["center"]["all"][key] * 100]))
+                               hs["weak"]["all"][key] * 100]))
                     hf.update_layout(barmode="group")
                     hf.update_yaxes(title="%")
                     _style(hf, 300)
@@ -1411,8 +1409,8 @@ with tab_charts:
                     st.metric("Dominant-side share", _pctf(hs["dom_share"]))
                     _de, _we = hs["dominant"]["all"]["eFG"], hs["weak"]["all"]["eFG"]
                     st.metric("Dominant eFG% edge", f"{(_de - _we) * 100:+.1f}pp")
-                    st.caption("Right-handers' right-side shots are 'dominant', "
-                               "lefties mirrored. Center = straightaway.")
+                    st.caption("Right-handers' right-half shots are 'dominant', "
+                               "lefties mirrored. Dead-center shots ignored.")
 
             # contested eFG% broken down: by 2/3, by zone, by creation type
             st.markdown("**Contested vs open eFG% — every which way**")

@@ -3303,19 +3303,66 @@ if True:
             if rows_r:
                 rc1, rc2 = st.columns([3, 2])
                 with rc1:
-                    seq = list(reversed(rows_r))
-                    rf = go.Figure()
-                    rf.add_trace(go.Bar(
-                        x=[v["ORAPM"] for v in seq], y=[v["name"] for v in seq],
-                        name="O-RAPM", orientation="h", marker_color=ACCENT))
-                    rf.add_trace(go.Bar(
-                        x=[v["DRAPM"] for v in seq], y=[v["name"] for v in seq],
-                        name="D-RAPM", orientation="h", marker_color=BLUE))
-                    rf.update_layout(barmode="relative")
-                    rf.update_xaxes(title="Pts / 100 vs average")
-                    _style(rf, max(220, 32 * len(seq) + 60))
-                    rf.update_layout(margin=dict(l=4, r=14, t=6, b=30))
-                    st.plotly_chart(rf, width="stretch", key="il_rapm")
+                    # Two-way quadrant: O-RAPM (x) vs D-RAPM (y), size = poss,
+                    # solid = significantly clear of average (engine `sig`),
+                    # hollow = directional. Upgrades the old relative bar — the
+                    # one bit that says "this impact is real", not just ranked.
+                    _GRN, _RED, _BLU = "#3fb950", "#e74c3c", "#58a6ff"
+                    _ax = max(2.0,
+                              max((abs(v["ORAPM"]) for v in rows_r), default=2),
+                              max((abs(v["DRAPM"]) for v in rows_r), default=2)) * 1.1
+                    _mp = max((v["poss"] for v in rows_r), default=1) or 1
+                    qf = go.Figure()
+                    for _sg, _sym, _leg in (
+                            (True, "circle", "Clear of average"),
+                            (False, "circle-open", "Directional (small sample)")):
+                        _grp = [v for v in rows_r if bool(v.get("sig")) == _sg]
+                        if not _grp:
+                            continue
+                        qf.add_trace(go.Scatter(
+                            x=[v["ORAPM"] for v in _grp],
+                            y=[v["DRAPM"] for v in _grp],
+                            mode="markers+text" if _sg else "markers",
+                            text=[v["name"] for v in _grp] if _sg else None,
+                            textposition="top center",
+                            textfont=dict(size=9, color="#c9d1d9"), name=_leg,
+                            marker=dict(
+                                size=[max(11, min(34, 11 + 25 * (v["poss"] / _mp)))
+                                      for v in _grp],
+                                symbol=_sym,
+                                color=[_GRN if v["RAPM"] > 0 else _RED
+                                       for v in _grp],
+                                line=dict(width=1.6,
+                                          color=[_GRN if v["RAPM"] > 0 else _RED
+                                                 for v in _grp])),
+                            customdata=[(v["RAPM"], v["poss"]) for v in _grp],
+                            hovertemplate=("%{text}<br>" if _sg else "")
+                            + "O %{x:+.1f} · D %{y:+.1f} · RAPM "
+                            "%{customdata[0]:+.1f} · %{customdata[1]} poss"
+                            "<extra></extra>"))
+                    qf.add_vline(x=0, line=dict(color="#8b949e", width=1,
+                                                dash="dot"))
+                    qf.add_hline(y=0, line=dict(color="#8b949e", width=1,
+                                                dash="dot"))
+                    for _qx, _qy, _txt, _clr in (
+                            (0.72, 0.9, "Two-Way Star", _GRN),
+                            (-0.76, 0.9, "Stopper", _BLU),
+                            (0.72, -0.92, "Off. Engine", ACCENT),
+                            (-0.76, -0.92, "Liability", "#8b949e")):
+                        qf.add_annotation(x=_qx * _ax, y=_qy * _ax, text=_txt,
+                                          showarrow=False, opacity=0.65,
+                                          font=dict(size=10, color=_clr))
+                    qf.update_xaxes(title="Offensive RAPM →", range=[-_ax, _ax],
+                                    zeroline=False)
+                    qf.update_yaxes(title="Defensive RAPM →", range=[-_ax, _ax],
+                                    zeroline=False)
+                    _style(qf, 430)
+                    qf.update_layout(margin=dict(l=10, r=14, t=10, b=40))
+                    st.plotly_chart(qf, width="stretch", key="il_rapm_quad")
+                    st.caption("Right = better offense, up = better defense, "
+                               "size = possessions. Solid dots clear league "
+                               "average; hollow are directional on the small "
+                               "book.")
                 with rc2:
                     st.dataframe(pd.DataFrame([{
                         "Player": v["name"], "RAPM": v["RAPM"],

@@ -16,7 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # ── Page boot (config + global CSS + theme + login + cache sync) ───────────────
 from helpers.ui import (page_chrome, page_header, style_fig as _style,
-                        gauge as _gauge, GOOD, BAD, AWAY)
+                        gauge as _gauge, lab_hero as _lab_hero,
+                        wp_ribbon as _wp_ribbon, spotlight as _spotlight,
+                        mini_tile as _mini, GOOD, BAD, AWAY)
 
 _cfg, ACCENT = page_chrome("Analytics Hub")
 
@@ -159,13 +161,17 @@ def _dashboard(gender):
                 elif e["tid"] == g["t2"]:
                     a += v
                 mc.append((S.elapsed(e["quarter"], e["time"]), h - a))
-            gei = WP.game_excitement_index(WP.wp_curve(mc))
+            _curve = WP.wp_curve(mc)
+            gei = WP.game_excitement_index(_curve)
             if best is None or gei > best[0]:
                 # events feed the win-prob curve only; display the official
-                # final from games.home_score/away_score (event fallback)
+                # final from games.home_score/away_score (event fallback).
+                # Keep the curve + drama summary so the landing can DRAMATIZE
+                # the game instead of throwing the curve away for a scalar.
                 best = (gei, g["n1"], g["n2"],
                         g["hs"] if g["hs"] is not None else h,
-                        g["aws"] if g["aws"] is not None else a)
+                        g["aws"] if g["aws"] is not None else a,
+                        _curve, WP.summarize(_curve))
         d["game"] = best
     except Exception as e:
         _fail("Game of the season", e)
@@ -176,9 +182,9 @@ def _dashboard(gender):
 #  HEADER + LEAGUE TOGGLE
 # ══════════════════════════════════════════════════════════════════════════════
 
-page_header("Analytics Hub — Executive Dashboard",
-            sub="Track it · analyze it · predict it · scout it. "
-                "The whole program at a glance.")
+_lab_hero("Analytics Hub",
+          sub="Track it · analyze it · predict it · scout it — "
+              "the whole program at a glance.")
 
 _gender = "F"
 try:
@@ -221,15 +227,52 @@ else:
         k[4].metric("Top scorer", D["scorer"][0],
                     f"{dl:+.1f} vs avg ppg" if dl is not None else None)
 
-    # ── game of the season banner (GEI is event-derived — Paid only) ───────────
+    # ── game of the season — DRAMATIZED win-prob ribbon (Paid only) ────────────
     if D["game"] and _paid:
-        gei, n1, n2, h, a = D["game"]
         from helpers.win_probability import excitement_label
-        st.markdown(
-            f"<div class='glass-tile'><b>Game of the season</b> — "
-            f"{n2} {a} @ {n1} {h} · "
-            f"<span style='color:var(--accent)'>GEI {gei:.1f} · {excitement_label(gei)}</span>"
-            f"</div>", unsafe_allow_html=True)
+        try:
+            gei, n1, n2, h, a, _curve, _summ = D["game"]
+            st.markdown("<div class='lab-hdr'>Game of the season</div>",
+                        unsafe_allow_html=True)
+            _gc = st.columns((5, 2), gap="medium")
+            with _gc[0]:
+                _wpfig = _wp_ribbon(_curve, home_name=n1, accent=ACCENT,
+                                    height=230)
+                if _wpfig is not None:
+                    st.plotly_chart(_wpfig, width="stretch", key="wp_gots")
+                else:
+                    st.markdown(
+                        f"<div class='glass-tile'>{n2} {a} @ {n1} {h}</div>",
+                        unsafe_allow_html=True)
+                st.caption(f"{n2} {a} @ {n1} {h} — {n1} win probability through "
+                           f"the game.")
+            with _gc[1]:
+                st.markdown(
+                    _spotlight(f"{gei:.1f}", "Game Excitement Index",
+                               excitement_label(gei), color=ACCENT),
+                    unsafe_allow_html=True)
+                if _summ:
+                    _m = st.columns(2)
+                    _m[0].markdown(_mini("Lead changes",
+                                         _summ.get("lead_changes", 0)),
+                                   unsafe_allow_html=True)
+                    _m[1].markdown(_mini("Peak swing",
+                                         f"{_summ.get('peak_swing', 0) * 100:.0f}%"),
+                                   unsafe_allow_html=True)
+                    if _summ.get("comeback", 0) > 0.02:
+                        st.markdown(
+                            _mini("Biggest comeback",
+                                  f"from {_summ.get('min_wp_winner', 0.5) * 100:.0f}% odds"),
+                            unsafe_allow_html=True)
+        except Exception:
+            gei = D["game"][0]
+            n1, n2, h, a = D["game"][1:5]
+            st.markdown(
+                f"<div class='glass-tile'><b>Game of the season</b> — "
+                f"{n2} {a} @ {n1} {h} · "
+                f"<span style='color:var(--accent)'>GEI {gei:.1f} · "
+                f"{excitement_label(gei)}</span></div>",
+                unsafe_allow_html=True)
 
     # ── command-center grid (gauges | hero charts | leaderboards) ──────────────
     col = st.columns((2, 4.4, 3), gap="medium")

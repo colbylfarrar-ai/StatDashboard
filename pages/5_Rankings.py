@@ -37,7 +37,8 @@ from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
                         AWAY, gender_radio, score_card, grid as _grid,
-                        page_header, empty_state, HEAT, DIVERGE)
+                        page_header, lab_hero as _lab_hero, empty_state,
+                        HEAT, DIVERGE)
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
@@ -268,10 +269,10 @@ def _team_tracked_deep(team_id, vis=None):
 #  PAGE HEADER + GENDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-page_header("Rankings",
-            sub="Opponent-adjusted power, résumé and possession analytics "
-                "across the whole league — results power every team, tracked "
-                "games add the deep layer.")
+_lab_hero("Rankings", phase="ANALYZE",
+          sub="Opponent-adjusted power, résumé and possession analytics "
+              "across the whole league — results power every team, tracked "
+              "games add the deep layer.")
 
 gender = gender_radio()
 

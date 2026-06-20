@@ -29,7 +29,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
-from helpers.ui import (page_chrome, page_header, empty_state, rgb as _rgb,
+from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
+                        empty_state, rgb as _rgb,
                         style_fig as _style, CARD_BG, GRID, HEAT, PALETTE,
                         gender_radio, grid as _grid)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
@@ -271,9 +272,9 @@ def _spotlight(num, label, sub=""):
 #  HEADER + CONTROLS
 # ══════════════════════════════════════════════════════════════════════════════
 
-page_header("Player Analytics Lab",
-            sub="Every tracked stat · shot charts · 0-100 ratings · "
-                "invented metrics — all built from play-by-play events.")
+_lab_hero("Player Analytics Lab", phase="ANALYZE",
+          sub="Every tracked stat · shot charts · 0-100 ratings · "
+              "invented metrics — all built from play-by-play events.")
 
 c1, c2 = st.columns([1, 2])
 gender = gender_radio(c1)

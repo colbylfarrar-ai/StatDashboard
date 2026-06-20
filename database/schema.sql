@@ -92,5 +92,6 @@ CREATE TABLE IF NOT EXISTS game_events (
     zone                TEXT    CHECK(zone IN ('LC','LW','C','RW','RC')),
     secondary_player_id INTEGER REFERENCES players(id),
     official_id         INTEGER REFERENCES officials(id),
-    stolen_by_id        INTEGER REFERENCES players(id)
+    stolen_by_id        INTEGER REFERENCES players(id),
+    play_type           TEXT
 );

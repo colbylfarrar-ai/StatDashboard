@@ -103,6 +103,7 @@ class EventIn(BaseModel):
     secondary_player_id: int | None = None
     official_id: int | None = None
     stolen_by_id: int | None = None
+    play_type: str | None = None
     on_court: list[int] = Field(default_factory=list)
     officials_on: list[int] = Field(default_factory=list)
 

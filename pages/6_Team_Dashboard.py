@@ -40,7 +40,7 @@ from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, page_header, rgb as _rgb,
                         style_fig as _style, q_label as _q_label, empty_state,
-                        gender_radio, gender_label, grid as _grid,
+                        gender_radio, gender_label, grid as _grid, seg as _seg,
                         AWAY, CARD_BG, GRID, HEAT, DIVERGE)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
@@ -927,8 +927,8 @@ with tab_charts:
                 "Track a game in the Game Tracker to unlock play-type efficiency "
                 "and league percentiles.", icon="🎬")
         else:
-            _ptside = st.radio("Side of the ball", ["Offense", "Defense"],
-                               horizontal=True, key="pt_side")
+            _ptside = _seg("Side of the ball", ["Offense", "Defense"],
+                           key="pt_side") or "Offense"
             _ptoff = _ptside == "Offense"
             _ptv = _playtype_view(gender, team_id, _ptoff)
             _ptrows = _ptv["rows"]
@@ -3407,12 +3407,12 @@ if True:
             # ── win probability added ────────────────────────────────────────
             st.markdown("<div class='lab-hdr'>Win Probability Added (WPA)</div>",
                         unsafe_allow_html=True)
-            wmode = st.radio(
-                "Model", ["Scoring", "Possession"], horizontal=True,
-                key="il_wpa_mode",
+            wmode = _seg(
+                "Model", ["Scoring", "Possession"], key="il_wpa_mode",
                 help="Scoring = win-prob swing on made baskets. Possession = value "
                      "over an average possession on every shot AND turnover, split "
-                     "into offense and defense (credits stops, steals, blocks).")
+                     "into offense and defense (credits stops, steals, blocks).") \
+                or "Scoring"
             st.caption("Opponent-adjusted: each game's pre-game spread feeds the "
                        "win-probability model, so a stop or comeback earned as the "
                        "underdog (vs a stronger team) is worth more, and padding a "

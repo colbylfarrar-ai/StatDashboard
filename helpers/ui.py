@@ -499,20 +499,22 @@ def engine_status(label="Crunching the numbers…", steps=None):
 
 
 def seg(label, options, *, default=None, key=None, format_func=str,
-        help=None, label_visibility="visible"):
+        help=None, label_visibility="visible", container=None):
     """``st.segmented_control`` view-switcher with an ``st.radio`` fallback.
     Use for per-game/per-100, scope, off/def toggles — pill UI that feels modern
-    and reruns instantly inside a fragment."""
+    and reruns instantly inside a fragment. ``container`` is an st.columns slot
+    (or st, the default), mirroring ``gender_radio``."""
+    c = container if container is not None else st
     dflt = default if default is not None else (options[0] if options else None)
     try:
-        return st.segmented_control(
+        return c.segmented_control(
             label, options, default=dflt, key=key, format_func=format_func,
             help=help, label_visibility=label_visibility)
     except Exception:
         idx = options.index(default) if default in options else 0
-        return st.radio(label, options, index=idx, key=key,
-                        format_func=format_func, horizontal=True, help=help,
-                        label_visibility=label_visibility)
+        return c.radio(label, options, index=idx, key=key,
+                       format_func=format_func, horizontal=True, help=help,
+                       label_visibility=label_visibility)
 
 
 def info_popover(label, body_md, *, icon="ⓘ"):

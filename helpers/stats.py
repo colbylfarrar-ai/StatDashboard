@@ -1451,6 +1451,61 @@ def player_zone_guarded(game_ids=None, events=None, player_id=None):
     return final
 
 
+def player_hand_splits(game_ids=None, events=None, player_id=None, hand=None):
+    """
+    Per-player shooting split by hand side: dominant / weak / center.
+
+    The shooter's handedness (players.handedness) maps each shot's floor side to a
+    bucket: a righty's right-side shots are "dominant", left-side "weak"; a lefty is
+    mirrored; straightaway (zone C) is "center" and excluded from the dominant↔weak
+    comparison. Each bucket is also split guarded vs open, so the UI can show where a
+    player shoots more, shoots better, and how contested those looks are — a sibling
+    to player_zone_guarded keyed on hand side instead of contest. See
+    helpers/handedness.py for the classification.
+
+    Returns {player_id: {bucket: {"all":{FGA,FGM,pct}, "guarded":{…}, "open":{…}}}}
+    for bucket in ("dominant","weak","center"). With player_id, returns just that
+    player's dict (zero-filled if they have no located shots).
+    """
+    import helpers.handedness as HD
+    if events is None:
+        events = fetch_events(game_ids)
+    if hand is None:
+        hand = HD.hand_map()
+
+    def _blank():
+        return {k: {"FGA": 0, "FGM": 0} for k in ("all", "guarded", "open")}
+
+    out = {}
+    for e in events:
+        if e["event_type"] != "shot" or e["primary_player_id"] is None:
+            continue
+        z = e["zone"]
+        if not z:
+            continue
+        pid = e["primary_player_id"]
+        bucket = HD.hand_bucket(z, hand.get(pid, "right"))
+        d = out.setdefault(pid, {b: _blank() for b in HD.HAND_BUCKETS})
+        gkey = "guarded" if e["guarded_by_id"] is not None else "open"
+        made = e["shot_result"] == "make"
+        for cell in (d[bucket]["all"], d[bucket][gkey]):
+            cell["FGA"] += 1
+            if made:
+                cell["FGM"] += 1
+
+    def _fin(d):
+        return {b: {k: {"FGA": v["FGA"], "FGM": v["FGM"], "pct": _safe(v["FGM"], v["FGA"])}
+                    for k, v in cells.items()}
+                for b, cells in d.items()}
+
+    final = {pid: _fin(d) for pid, d in out.items()}
+    if player_id is not None:
+        empty = {b: {k: {"FGA": 0, "FGM": 0, "pct": 0.0}
+                     for k in ("all", "guarded", "open")} for b in HD.HAND_BUCKETS}
+        return final.get(player_id, empty)
+    return final
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SHOT LOCATIONS  (tap-captured x/y — the real shot chart, superset of zones)
 # ══════════════════════════════════════════════════════════════════════════════

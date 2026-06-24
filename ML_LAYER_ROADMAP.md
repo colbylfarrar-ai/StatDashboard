@@ -145,6 +145,11 @@ LLM-shell investment).
   `foul_prone` (season PF/32 flags), `foul_out_projection` (live: minutes-to-foul-out + risk tier).
   Tests `tracker/test_rotation_plan.py` (8 pass). Wired: live foul-watch in the Game Tracker box,
   stagger + foul-prone in the Team Dashboard Impact Lab.
-- **Next:** possession-value ledger (where our points/100 come from vs leak — TOV rate, OREB
-  2nd-chance, shot quality, one unified chain), then the referee/crew tendency profile. (Tier-1
-  late-game card stays league-rate v1 until opponent FT/3P rates are dense.)
+- **Possession-value ledger — SHIPPED ✅:** `helpers/possession_value.py` — `possession_ledger`
+  walks every possession to its terminal outcome (scored / missed→own-board / missed→lost / turnover)
+  → points/100 sources (made 2s, 3s, FTs) + outcome mix + eFG/TOV/OREB, both offense and allowed.
+  Tests `tracker/test_possession_value.py` (4 pass). Wired into the Team Dashboard Impact Lab.
+- **Next:** referee/crew tendency profile (`game_events.official_id` on fouls → per-crew foul-rate /
+  pace / home-lean — a free pre-game edge). After that Tier 2 is essentially complete; remaining
+  ideas are Tier-2 LLM Coach-Chat (large) or Tier-3 (volume-gated). (Tier-1 late-game card stays
+  league-rate v1 until opponent FT/3P rates are dense.)

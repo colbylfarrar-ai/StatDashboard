@@ -674,6 +674,14 @@ def _rotation(tid):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _poss_ledger(tid):
+    """Possession-value ledger (points/100 sources + outcome mix, offense & allowed)
+    for one team (Tier 2, ML_LAYER_ROADMAP). Cached on team id."""
+    import helpers.possession_value as PVL
+    return PVL.team_ledger(tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _season_wpa(g, mode):
     return WP.season_wpa(gender=g, mode=mode)
 
@@ -3564,6 +3572,36 @@ if True:
                     st.markdown("**Foul-prone (season PF/32):** " + " · ".join(
                         f"{r['name']} {r['pf32']:.1f}" + ("⚠" if r["prone"] else "")
                         for r in _prone[:5]))
+
+            # ── possession-value ledger: points/100 sources vs leaks (Tier 2) ─
+            _pl = _poss_ledger(team_id)
+            if _pl["offense"] or _pl["defense"]:
+                st.markdown("<div class='lab-hdr'>Possession value — where points "
+                            "come from vs leak</div>", unsafe_allow_html=True)
+                st.caption("Every possession walked to its end. Offense = points we "
+                           "score / leaks we commit; Defense = what we allow / force.")
+                _plc = st.columns(2)
+                for _col, (_lbl, _lg) in zip(
+                        _plc, [("Offense", _pl["offense"]),
+                               ("Defense (allowed)", _pl["defense"])]):
+                    with _col:
+                        st.markdown(f"**{_lbl}**")
+                        if not _lg:
+                            st.caption("No possessions yet.")
+                            continue
+                        st.metric("Points / 100", f"{_lg['pts_100']:.0f}",
+                                  f"PPP {_lg['ppp']:.2f}", delta_color="off")
+                        st.dataframe(pd.DataFrame([
+                            {"Source": s["label"], "Pts/100": s["pts_100"]}
+                            for s in _lg["sources"]]), hide_index=True,
+                            width="stretch")
+                        _o = {x["key"]: x for x in _lg["outcomes"]}
+                        st.caption(
+                            f"Scored {_o['scored']['pct'] * 100:.0f}% · own board "
+                            f"{_o['oreb']['pct'] * 100:.0f}% · lost "
+                            f"{_o['lost']['pct'] * 100:.0f}% · TOV "
+                            f"{_o['turnover']['pct'] * 100:.0f}% · eFG "
+                            f"{_lg['efg'] * 100:.0f}%")
 
             # ── win probability added ────────────────────────────────────────
             st.markdown("<div class='lab-hdr'>Win Probability Added (WPA)</div>",

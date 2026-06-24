@@ -134,6 +134,12 @@ LLM-shell investment).
   `player_smoe` (points-over-expected, shrunk toward 0 by volume). Tests `tracker/test_shotquality.py`
   (5 pass). Wired into the Team Dashboard Impact Lab (`_shot_quality`, SMOE leaderboard). No sklearn
   dependency (own IRLS solver) → no silent graceful-degradation.
-- **Next:** opponent shot-concession heatmap (kernel-smoothed expected-points-allowed surface, rides
-  on xPP-Q), then the stagger/minutes optimizer. (Tier-1 late-game card stays league-rate v1 until
-  opponent FT/3P rates are dense.)
+- **Opponent shot-concession + shot-selection maps — SHIPPED ✅:** `helpers/concession.py` —
+  per-zone (not a kernel surface; zones are the stable unit at this scale) over-expected via xPP-Q.
+  `defense_concession` (where a defense gives up the best looks — attack-here zones) + `shot_selection`
+  (self-scout: over-used-and-underperforming vs efficient-but-under-used zones). Tests
+  `tracker/test_concession.py` (4 pass). Wired into the scout tab: concession on the opponent view,
+  shot-selection on self-scout (cached `_xpp_model`).
+- **Next:** stagger / minutes optimizer + foul-trouble simulator (`gameflow.rotation` overlap →
+  recommend a stagger; foul-out projection), then the possession-value ledger. (Tier-1 late-game
+  card stays league-rate v1 until opponent FT/3P rates are dense.)

@@ -62,6 +62,16 @@ SCOUT_SECTIONS = [
 ]
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _xpp_model(g):
+    """League-pooled xPP-Q shot-quality model for the concession / shot-selection
+    maps (Tier 2). None when under MIN_FIT located shots — callers skip the maps."""
+    import helpers.shotquality as SQ
+    import helpers.playtypes as PT
+    return SQ.fit_league_model(
+        shots=S.located_shots(events=S.fetch_events(PT._tracked_game_ids(g))))
+
+
 def _auto_report_tips(ctx):
     """The rule-based auto scouting tips (markdown **bold**). Shared by the
     on-screen 'Scouting report' block and the printable sheet so they never drift."""
@@ -730,6 +740,51 @@ def render(ctx):
         zfig.update_yaxes(title="Attempts")
         ctx.style(zfig, 320)
         st.plotly_chart(zfig, width="stretch", key="scout_zones")
+
+    # ── spatial: defense concession (opponent) / shot selection (self) ───────
+    # (Tier 2, ML_LAYER_ROADMAP) — rides on the league xPP-Q model; per-zone over
+    # expected. Skips silently when the model can't fit (too few located shots).
+    _xppm = _xpp_model(ctx.gender)
+    _vis_gids = list(ctx.bundle.get("tracked_ids") or [])
+    if _xppm and _vis_gids:
+        import helpers.concession as CO
+        if _self:
+            sel = CO.shot_selection(ctx.team_id, model=_xppm, game_ids=_vis_gids)
+            if sel["overshoot"] or sel["underused"]:
+                st.markdown("<div class='lab-hdr'>Shot selection — where we force "
+                            "vs leave points</div>", unsafe_allow_html=True)
+                if sel["overshoot"]:
+                    st.markdown("**Over-used & underperforming** (stop forcing): "
+                                + " · ".join(
+                                    f"{r['label']} ({r['share'] * 100:.0f}% of shots, "
+                                    f"{r['residual']:+.2f}/shot)"
+                                    for r in sel["overshoot"]))
+                if sel["underused"]:
+                    st.markdown("**Efficient but under-used** (get more): "
+                                + " · ".join(
+                                    f"{r['label']} ({r['share'] * 100:.0f}%, "
+                                    f"{r['residual']:+.2f}/shot)"
+                                    for r in sel["underused"]))
+                st.caption(sel["note"])
+        else:
+            con = CO.defense_concession(ctx.team_id, model=_xppm, game_ids=_vis_gids)
+            if con["leaks"]:
+                st.markdown("<div class='lab-hdr'>Where this defense concedes</div>",
+                            unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame([{
+                    "Zone": r["label"], "Allowed att": r["n"],
+                    "Share": r["share"] * 100, "PPS allowed": r["pps"],
+                    "xPPS (quality)": r["xpps"], "Over expected": r["residual"],
+                } for r in con["rows"] if r["n"]]), hide_index=True, width="stretch",
+                    column_config={
+                        "Share": st.column_config.NumberColumn(format="%.0f%%"),
+                        "PPS allowed": st.column_config.NumberColumn(format="%.2f"),
+                        "xPPS (quality)": st.column_config.NumberColumn(format="%.2f"),
+                        "Over expected": st.column_config.NumberColumn(format="%+.2f"),
+                    })
+                st.caption("Attack: "
+                           + " · ".join(r["label"] for r in con["leaks"][:3])
+                           + f". {con['note']}")
 
     # ── scoring by possession length (when tracked) ──────────────────────────
     if _show("poss_length") and ctx.bundle.get("poss_length"):

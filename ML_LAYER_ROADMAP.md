@@ -128,6 +128,12 @@ LLM-shell investment).
   B=opponent; your set-call PPP × their PPP-allowed on the same set, plus the scheme to play on D.
   Tag-driven — lights up as `play_type` / `defense` get tagged. Defender-level assignment deferred
   (needs denser per-player `guarded_by`).
-- **Next:** xPP-Q continuous shot-quality (league-pooled ridge-logistic on (x,y)+angle+contested),
-  then the opponent shot-concession heatmap. (Tier-1 late-game card stays league-rate v1 until
+- **xPP-Q continuous shot-quality + SMOE — SHIPPED ✅:** `helpers/shotquality.py` — a pure-numpy
+  ridge-logistic make-prob on (x,y)→[dist, dist², is_three, contested, |angle|], league-pooled
+  (`fit_league_model`, gated at MIN_FIT=150 shots), with `make_prob` / `expected_points` and per-player
+  `player_smoe` (points-over-expected, shrunk toward 0 by volume). Tests `tracker/test_shotquality.py`
+  (5 pass). Wired into the Team Dashboard Impact Lab (`_shot_quality`, SMOE leaderboard). No sklearn
+  dependency (own IRLS solver) → no silent graceful-degradation.
+- **Next:** opponent shot-concession heatmap (kernel-smoothed expected-points-allowed surface, rides
+  on xPP-Q), then the stagger/minutes optimizer. (Tier-1 late-game card stays league-rate v1 until
   opponent FT/3P rates are dense.)

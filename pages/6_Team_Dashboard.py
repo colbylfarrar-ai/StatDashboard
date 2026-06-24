@@ -655,6 +655,17 @@ def _rapm(g, box_prior=False):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _shot_quality(g):
+    """League-pooled continuous shot-quality (xPP-Q) + per-player SMOE (points over
+    expected). Returns ({pid: smoe_row}, n_shots_fit) or ({}, 0) when there aren't
+    enough located shots to fit (caller shows a fallback). Tier 2, ML_LAYER_ROADMAP."""
+    import helpers.shotquality as SQ
+    sh = S.located_shots(events=S.fetch_events(_gender_tracked_ids(g)))
+    m = SQ.fit_league_model(shots=sh)
+    return (SQ.player_smoe(shots=sh, model=m), m["n"]) if m else ({}, 0)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _season_wpa(g, mode):
     return WP.season_wpa(gender=g, mode=mode)
 
@@ -3495,6 +3506,30 @@ if True:
                         "can't separate most players.")
             else:
                 st.caption("Not enough possessions to solve RAPM for this team yet.")
+
+            # ── shot quality — SMOE (points over expected, Tier 2) ───────────
+            _sq, _sqn = _shot_quality(gender)
+            if _sq:
+                _rows_sq = sorted((v for pid, v in _sq.items() if pid in my_pids),
+                                  key=lambda v: -v["poe_shrunk"])
+                if _rows_sq:
+                    st.markdown("<div class='lab-hdr'>Shot quality — points over "
+                                "expected (SMOE)</div>", unsafe_allow_html=True)
+                    st.caption(
+                        f"Points scored vs what a league model expects from each "
+                        f"player's exact shots — continuous (x,y) + contested make "
+                        f"probability, league-pooled over {_sqn} located shots and "
+                        f"shrunk toward 0 for small samples. + = makes tough shots; "
+                        f"− = leaves points on the floor.")
+                    st.dataframe(pd.DataFrame([{
+                        "Player": v["name"], "Shots": v["n"],
+                        "PPS": v["pps"], "xPPS": v["xpps"], "SMOE": v["poe_shrunk"],
+                    } for v in _rows_sq]), hide_index=True, width="stretch",
+                        column_config={
+                            "PPS": st.column_config.NumberColumn("PPS", format="%.2f"),
+                            "xPPS": st.column_config.NumberColumn("xPPS", format="%.2f"),
+                            "SMOE": st.column_config.NumberColumn("SMOE", format="%+.2f"),
+                        })
 
             # ── win probability added ────────────────────────────────────────
             st.markdown("<div class='lab-hdr'>Win Probability Added (WPA)</div>",

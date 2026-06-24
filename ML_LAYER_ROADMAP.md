@@ -140,6 +140,11 @@ LLM-shell investment).
   (self-scout: over-used-and-underperforming vs efficient-but-under-used zones). Tests
   `tracker/test_concession.py` (4 pass). Wired into the scout tab: concession on the opponent view,
   shot-selection on self-scout (cached `_xpp_model`).
-- **Next:** stagger / minutes optimizer + foul-trouble simulator (`gameflow.rotation` overlap →
-  recommend a stagger; foul-out projection), then the possession-value ledger. (Tier-1 late-game
-  card stays league-rate v1 until opponent FT/3P rates are dense.)
+- **Stagger / minutes optimizer + foul-trouble simulator — SHIPPED ✅:** `helpers/rotation_plan.py` —
+  `star_coverage` (uncovered floor-time + the net bleed when no key player is on → stagger their rest),
+  `foul_prone` (season PF/32 flags), `foul_out_projection` (live: minutes-to-foul-out + risk tier).
+  Tests `tracker/test_rotation_plan.py` (8 pass). Wired: live foul-watch in the Game Tracker box,
+  stagger + foul-prone in the Team Dashboard Impact Lab.
+- **Next:** possession-value ledger (where our points/100 come from vs leak — TOV rate, OREB
+  2nd-chance, shot quality, one unified chain), then the referee/crew tendency profile. (Tier-1
+  late-game card stays league-rate v1 until opponent FT/3P rates are dense.)

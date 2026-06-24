@@ -485,6 +485,38 @@ def _render_command_center():
                "MIN from event-clock elapsed time; needs the on-court five set "
                "wherever the events are logged.")
 
+    # ── foul watch: live foul-out projection for players in trouble (Tier 2,
+    #    ML_LAYER_ROADMAP). At each player's current foul pace, when do they foul
+    #    out? Same 480/240 clock as the courtside strip. Guarded — never blocks. ──
+    if not is_tracked:
+        try:
+            import helpers.rotation_plan as _RP
+            _QSEC = 480
+            _tot = 4 * _QSEC + max(cur_q - 4, 0) * 240
+            _rec = max(events_asc, key=lambda e: (e["quarter"],
+                                                  -GE.time_to_secs(e["time"]), e["id"]))
+            _rq, _rr = _rec["quarter"], GE.time_to_secs(_rec["time"])
+            _el = ((_rq - 1) * _QSEC + (_QSEC - _rr) if _rq <= 4
+                   else 4 * _QSEC + (_rq - 5) * 240 + (240 - _rr))
+            _sl = max(_tot - _el, 0)
+            _tname = {t1id: t1name, t2id: t2name}
+            _watch = []
+            for r in box_rows:
+                if r["PF"] >= 3 and r["MIN"] > 0:
+                    fp = _RP.foul_out_projection(r["PF"], r["MIN"], _sl)
+                    if fp["risk"] in ("out", "high", "med"):
+                        _watch.append((r, fp))
+            if _watch:
+                _ord = {"out": 0, "high": 1, "med": 2}
+                _watch.sort(key=lambda rf: _ord.get(rf[1]["risk"], 3))
+                st.markdown("**⚠ Foul watch**")
+                for r, fp in _watch:
+                    _emo = {"out": "🛑", "high": "🔴", "med": "🟠"}.get(fp["risk"], "")
+                    st.caption(f"{_emo} {r['Player']} "
+                               f"({_tname.get(r['_tid'], '')}) — {fp['note']}")
+        except Exception:
+            pass
+
     # ── live shot chart (tap-captured x/y from the phone or the form below) ────
     shots = query("""
         SELECT ge.shot_x AS x, ge.shot_y AS y, ge.shot_result, ge.shot_type,

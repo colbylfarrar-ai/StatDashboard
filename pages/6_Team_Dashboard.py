@@ -666,6 +666,14 @@ def _shot_quality(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _rotation(tid):
+    """Stagger coverage (star floor-time + bench-only net bleed) + season foul-prone
+    list for one team (Tier 2, ML_LAYER_ROADMAP). Cached on team id."""
+    import helpers.rotation_plan as RP
+    return RP.star_coverage(tid), RP.foul_prone(tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _season_wpa(g, mode):
     return WP.season_wpa(gender=g, mode=mode)
 
@@ -3530,6 +3538,32 @@ if True:
                             "xPPS": st.column_config.NumberColumn("xPPS", format="%.2f"),
                             "SMOE": st.column_config.NumberColumn("SMOE", format="%+.2f"),
                         })
+
+            # ── rotation: stagger coverage + foul trouble (Tier 2) ──────────
+            _cov, _prone = _rotation(team_id)
+            if _cov.get("bleed") is not None or _prone:
+                st.markdown("<div class='lab-hdr'>Rotation — stagger &amp; foul "
+                            "trouble</div>", unsafe_allow_html=True)
+                if _cov.get("stars"):
+                    _sn = " & ".join(s.get("name", "") for s in _cov["stars"])
+                    _rc = st.columns(3)
+                    _rc[0].metric("Uncovered minutes",
+                                  f"{_cov['uncovered_min_share'] * 100:.0f}%",
+                                  help=f"Share of floor time with neither {_sn} on.")
+                    _rc[1].metric("Net w/ star on",
+                                  f"{_cov['covered_net']:+.1f}"
+                                  if _cov["covered_net"] is not None else "—")
+                    _rc[2].metric("Net w/ none on",
+                                  f"{_cov['uncovered_net']:+.1f}"
+                                  if _cov["uncovered_net"] is not None else "—",
+                                  f"{-_cov['bleed']:+.1f} bleed"
+                                  if _cov["bleed"] is not None else None,
+                                  delta_color="inverse")
+                    st.caption(_cov["note"])
+                if _prone:
+                    st.markdown("**Foul-prone (season PF/32):** " + " · ".join(
+                        f"{r['name']} {r['pf32']:.1f}" + ("⚠" if r["prone"] else "")
+                        for r in _prone[:5]))
 
             # ── win probability added ────────────────────────────────────────
             st.markdown("<div class='lab-hdr'>Win Probability Added (WPA)</div>",

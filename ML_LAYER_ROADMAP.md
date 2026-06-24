@@ -120,5 +120,14 @@ LLM-shell investment).
   - Box-prior RAPM toggle → `pages/6_Team_Dashboard.py` Impact Lab (`_rapm(g, box_prior=…)`).
   - Self-scout predictability → `helpers/dashboard/scout_tab.py` (Self-scout framing).
   - Tagging-coverage strip → `pages/0_Analytics_Hub.py` (league-wide, Co-op-gated).
-- **Next:** Tier 2 — start with the Exploit Matrix + opponent-specific recommender (most new ground),
-  then xPP-Q shot-quality. (Late-game card is league-rate v1; wire opponent FT/3P rates when dense.)
+## Tier 2 — in progress
+
+- **Exploit Matrix + defensive plan (cross-team bridge) — SHIPPED ✅:** `helpers/exploit.py`
+  (`offensive_exploits` / `defensive_plan` / `game_plan`), tests `tracker/test_exploit.py` (5 pass),
+  wired into the War Room **Matchup** tab (`pages/9_War_Room.py`, `_game_plan`, co-op-gated). A=you,
+  B=opponent; your set-call PPP × their PPP-allowed on the same set, plus the scheme to play on D.
+  Tag-driven — lights up as `play_type` / `defense` get tagged. Defender-level assignment deferred
+  (needs denser per-player `guarded_by`).
+- **Next:** xPP-Q continuous shot-quality (league-pooled ridge-logistic on (x,y)+angle+contested),
+  then the opponent shot-concession heatmap. (Tier-1 late-game card stays league-rate v1 until
+  opponent FT/3P rates are dense.)

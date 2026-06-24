@@ -642,11 +642,16 @@ def _shot_model(g):
 
 
 @st.cache_data(ttl=600, show_spinner="Computing RAPM…")
-def _rapm(g):
+def _rapm(g, box_prior=False):
     """League-wide two-way RAPM over the gender's tracked games (holds teammates
     AND opponents constant — needs the whole pool, not one team). inference=True
-    attaches the statsmodels 95% CI / significance companion."""
-    return RA.compute_rapm(_gender_tracked_ids(g), inference=True)
+    attaches the statsmodels 95% CI / significance companion.
+
+    box_prior=True shrinks each player toward their player_ratings box impact
+    instead of toward league average (0) — the small-sample fix that keeps stars
+    off 'average' on a ~15-game book (ML_LAYER_ROADMAP Tier 1)."""
+    prior = RA.box_prior_from_ratings(gender=g) if box_prior else None
+    return RA.compute_rapm(_gender_tracked_ids(g), inference=True, prior=prior)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -3376,7 +3381,15 @@ if True:
                        "player, holding teammates AND opponents constant (one ridge "
                        "regression over every tracked possession in the league). "
                        "Directional on a small book.")
-            rap = _rapm(gender)
+            _bp = st.toggle(
+                "Box-prior (anchor to box impact)", key="il_rapm_boxprior",
+                help="Shrink each player toward their box-score impact instead of "
+                     "toward league average — keeps stars off 'average' on a short "
+                     "book. Off = classic shrink-to-average RAPM.")
+            if _bp:
+                st.caption("Box-prior on: stars are anchored to their player-rating "
+                           "box impact, then moved by the possession data (gentle).")
+            rap = _rapm(gender, box_prior=_bp)
             rows_r = sorted([v for pid, v in rap.items() if pid in my_pids],
                             key=lambda v: v["RAPM"], reverse=True)
             if rows_r:

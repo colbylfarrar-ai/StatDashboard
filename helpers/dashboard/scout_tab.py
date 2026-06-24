@@ -293,6 +293,43 @@ def render(ctx):
                         "off a pass. Speeding them up or walling the paint attacks "
                         "the profile above.")
 
+    # ── self-scout: how predictable are we? (Tier 1, ML_LAYER_ROADMAP) ────────
+    # Self-scout view only — the read an opposing coach makes when prepping you:
+    # a Shannon-entropy "scoutability" score off your tagged play-call mix, plus
+    # the over-used-and-inefficient / under-used-but-efficient sets.
+    if _self and ctx.has_tracked:
+        import helpers.selfscout as SS
+        rep = SS.self_scout_report(ctx.team_id, ctx.gender)
+        off, dfn, drift = rep["offense"], rep["defense"], rep["drift"]
+        st.markdown("<div class='lab-hdr'>How scoutable are we?</div>",
+                    unsafe_allow_html=True)
+        if off["rated"]:
+            pc1, pc2, pc3 = st.columns(3)
+            pc1.metric("Offense predictability", f"{off['predictability']:.0f}/100",
+                       help="Shannon entropy of your tagged play-call mix. Higher = "
+                            "more predictable (a scout keys on you faster); lower = "
+                            "balanced, hard to game-plan.")
+            pc2.metric("Most-run set",
+                       f"{off['top_set']} · {off['top_share']:.0f}%"
+                       if off["top_set"] else "—")
+            pc3.metric("Defense predictability",
+                       f"{dfn['predictability']:.0f}/100" if dfn["rated"] else "—",
+                       help="Same entropy read on your defensive scheme mix "
+                            "(needs Defense tags on enough trips).")
+        else:
+            st.caption(f"Tag more play calls to rate predictability — "
+                       f"{off['tagged']}/{SS.MIN_TAGGED} tagged shots so far.")
+        if drift["overused"]:
+            st.markdown("**Predictable & inefficient** (a scout's gift — cut or fix):")
+            for r in drift["overused"]:
+                st.markdown(f"- {r['label']} — {r['share'] * 100:.0f}% of sets · "
+                            f"{r['PPP']:.2f} PPP ({r['pct']:.0f}th pctl)")
+        if drift["underused"]:
+            st.markdown("**Efficient but under-used** (a weapon on the shelf):")
+            for r in drift["underused"]:
+                st.markdown(f"- {r['label']} — only {r['share'] * 100:.0f}% of sets · "
+                            f"{r['PPP']:.2f} PPP ({r['pct']:.0f}th pctl)")
+
     # ── should they shoot more 3s or 2s? ─────────────────────────────────────
     if _show("breakeven"):
         st.markdown("<div class='lab-hdr'>Should they shoot more 3s or 2s?"

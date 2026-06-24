@@ -149,7 +149,14 @@ LLM-shell investment).
   walks every possession to its terminal outcome (scored / missed→own-board / missed→lost / turnover)
   → points/100 sources (made 2s, 3s, FTs) + outcome mix + eFG/TOV/OREB, both offense and allowed.
   Tests `tracker/test_possession_value.py` (4 pass). Wired into the Team Dashboard Impact Lab.
-- **Next:** referee/crew tendency profile (`game_events.official_id` on fouls → per-crew foul-rate /
-  pace / home-lean — a free pre-game edge). After that Tier 2 is essentially complete; remaining
-  ideas are Tier-2 LLM Coach-Chat (large) or Tier-3 (volume-gated). (Tier-1 late-game card stays
-  league-rate v1 until opponent FT/3P rates are dense.)
+- **Referee/crew tendency profile — SHIPPED ✅ (mostly pre-existing):** the per-ref profile already
+  lived in the Officials Lab (FP100 whistle tightness, home/away lean, quarter-timing fingerprint,
+  PPP/pace env, vs-league deltas, archetype quadrant). The one real gap — a **pre-game crew outlook** —
+  is new: `helpers/ref_tendencies.py` `crew_outlook` synthesizes tonight's assigned refs into a
+  league-relative whistle / lean / scoring expectation + a "value-the-ball vs attack-the-rim" read.
+  Tests `tracker/test_ref_tendencies.py` (5 pass). Wired into the Officials Overview tab.
+
+**Tier 2 engine items COMPLETE.** Remaining roadmap work: the LLM Coach-Chat (large, separate effort —
+local LLM as a tool-calling shell over the engine) and the volume-gated Tier-3 items (blocked on a
+player-identity schema change / more tracked seasons). The Tier-1 late-game card stays league-rate v1
+until opponent FT/3P rates are dense.

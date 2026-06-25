@@ -40,6 +40,7 @@ import helpers.settings_utils as SU
 # still hides the whole bundle.
 SCOUT_SECTIONS = [
     ("keys", "Keys to the game (guard / attack)", "Overview"),
+    ("matchups", "Defensive matchups (who guards whom)", "Overview"),
     ("four_factors", "Four factors & tendencies", "Overview"),
     ("breakeven", "Should they shoot 2s or 3s?", "Overview"),
     ("auto_report", "Auto scouting report", "Overview"),

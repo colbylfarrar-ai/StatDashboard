@@ -868,6 +868,21 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             "<th class='n'>Pts/shot</th><th class='n'>FGA</th>"
             f"<th class='n'>FG%</th></tr>{rowsp}</table>")
 
+    # ── manual key-player intel (coach-entered; works for COLD opponents) ──
+    intel_html = ""
+    intel_rows = extra.get("manual_intel") or []
+    if _show("manual_intel") and intel_rows:
+        rws = "".join(
+            f"<tr><td class='n'>{e(str(r.get('num', '')))}</td>"
+            f"<td>{e(str(r.get('name', '')))}</td>"
+            f"<td>{e(str(r.get('note', '')))}</td></tr>"
+            for r in intel_rows if str(r.get('name', '')).strip())
+        if rws:
+            intel_html = (
+                "<h2>Key players (your scouting)</h2><table><tr>"
+                "<th class='n'>#</th><th>Player</th>"
+                f"<th>How to guard / threat</th></tr>{rws}</table>")
+
     # ── game-plan notes (coach prose) ──
     notes_html = ""
     ntext = (extra.get("notes") or "").strip()
@@ -959,6 +974,7 @@ table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
 {def_html}
 {three_html}
 {plen_html}
+{intel_html}
 {notes_html}{_flow_close}
 {shot_html}
 {pers_html}

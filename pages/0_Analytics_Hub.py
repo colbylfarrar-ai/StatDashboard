@@ -243,7 +243,10 @@ else:
     k = st.columns(5)
     k[0].metric("Teams rated", D["teams"])
     k[1].metric("Tracked games", D["tracked"],
-                f"{D['games_played']} played total", delta_color="off")
+                f"{D['games_played']} played total", delta_color="off",
+                help="Games logged play-by-play (phone tracker / Game Tracker). "
+                     "Tracked depth unlocks shot charts, lineups & possession "
+                     "ratings; box-score-only games still count toward standings.")
     if D["top"]:
         k[2].metric("Top team", D["top"]["name"],
                     f"Power {D['top']['Power']:.0f}", delta_color="off")

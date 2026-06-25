@@ -20,6 +20,7 @@ import helpers.stats as S
 import helpers.court_png as CP
 import helpers.playtypes as PT
 import helpers.defenses as DEF
+import helpers.player_ratings as PR
 
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
@@ -784,6 +785,10 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             brk = (f"<div class='brk'>{e(' · '.join(br))} "
                    f"<span style='color:#8b949e'>(0–100, 50 = lg avg)</span></div>"
                    if br else "")
+            _why = PR.overall_blurb(p.get("off"), p.get("def"),
+                                    p.get("ply"), p.get("reb"))
+            if _why:
+                brk += f"<div class='brk' style='color:#b25e00'>{e(_why)}</div>"
             tp = f"{p['tp']:.0f}%" if p.get("tp") is not None else "—"
             ts = f"{p['ts']:.0f}%" if p.get("ts") is not None else "—"
             _usg = f" · USG {p['usg']:.0f}%" if p.get("usg") is not None else ""

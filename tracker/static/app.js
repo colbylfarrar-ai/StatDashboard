@@ -920,7 +920,7 @@ function makeMissRow(onResult) {
 
 const SHOT_DETAILS = [
   ['pass_from_id', 'Pass from'],
-  ['shot_created_by_id', 'Created by'],
+  ['shot_created_by_id', 'Set up by'],
   ['rebound_by_id', 'Rebound by'],
   ['blocked_by_id', 'Blocked by'],
   ['guarded_by_id', 'Guarded by']
@@ -1067,7 +1067,7 @@ function renderFlow() {
   if (f.mode === 'shot') {
     if (f.x == null && !f.noLoc) {
       wrap.appendChild(flowHint('Tap the court to mark a shot'));
-      wrap.appendChild(flowBtn('No location', 'btn ghost small no-loc', function () {
+      wrap.appendChild(flowBtn('No court spot', 'btn ghost small no-loc', function () {
         f.noLoc = true;
         renderFlow();
       }));

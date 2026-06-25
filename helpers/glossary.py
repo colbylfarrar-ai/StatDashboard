@@ -403,6 +403,16 @@ STAT_DEFS = [
      "observed 5-man lineup ratings, drawn as a network of duos.",
      "Positive = the duo outscores opponents together; compare to each player's "
      "solo on-court net to spot pairings that lift or drag.", True),
+
+    # ── platform concept (load-bearing everywhere) ───────────────────────────────
+    ("Tracked", "Tracked vs box score", "Box Score", "",
+     "Tracked = possession-level play-by-play (who shot, from where, who assisted "
+     "or defended), captured by the phone tracker or the Game Tracker. Box score = "
+     "final counting totals (PTS, REB, AST…) entered by hand. Tracked depth is a "
+     "Paid feature; box scores are always free.",
+     "Tracked unlocks shot charts, lineups, play types and on-ball defense; "
+     "box-only coaches still get the full box + standings. Cross-season player "
+     "development reads tracked games.", False),
 ]
 
 CATEGORIES = ["Box Score", "Shooting", "Playmaking", "Rebounding", "Defense",

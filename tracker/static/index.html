@@ -106,6 +106,7 @@
         <button id="q-plus" class="btn sq" aria-label="Next period">+</button>
       </div>
       <div class="clock">
+        <button id="clk-toggle" class="btn sq clk-go" type="button" aria-label="Start clock">&#9654;</button>
         <button id="clk-minus" class="btn sq" type="button" aria-label="Clock down one second">&minus;</button>
         <input id="clock-min" type="number" min="0" max="99" value="8" inputmode="numeric" aria-label="Minutes">
         <span>:</span>
@@ -117,6 +118,10 @@
       <button id="btn-subs" class="btn ghost">Subs</button>
     </div>
   </header>
+
+  <!-- In-place subs: swap the on-court five without leaving the tracker, so
+       minutes and +/- (which key off the lineup snapshot) stay correct. -->
+  <div id="subs-panel" hidden></div>
 
   <div id="court-wrap"></div>
   <p id="shot-caption" class="caption"></p>
@@ -131,6 +136,12 @@
   <!-- Sticky "current defense" the opponent is in — set it once and every event
        logged inherits it until you change it (a team stays in a D for stretches). -->
   <div id="defense-bar"></div>
+
+  <!-- Quick vs full-detail shot entry. Quick (default) = tap shooter + make/miss
+       only; full adds assist / rebound / play-type rows on every shot. -->
+  <div id="flow-opts">
+    <button id="quick-toggle" class="btn ghost small" type="button"></button>
+  </div>
 
   <div id="flow"></div>
 

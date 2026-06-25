@@ -224,7 +224,10 @@ class Plan:
 # --------------------------------------------------------------------------- #
 # crawl (BFS over opponent links, bounded to target class+gender)
 # --------------------------------------------------------------------------- #
-def crawl(seed: int, want_class: str, want_gender: str, max_fetch: int):
+def crawl(seed, want_class, want_gender, max_fetch, *, progress=None, force=False):
+    """BFS opponent links, including only teams whose page header matches
+    want_class+want_gender. `progress(sched, tid)` is called per included team
+    (the CLI prints; the app updates a Streamlit status line)."""
     want_g = GENDER_MAP.get(want_gender, want_gender)
     seen, schedules = set(), []
     q = deque([seed])
@@ -234,19 +237,39 @@ def crawl(seed: int, want_class: str, want_gender: str, max_fetch: int):
             continue
         seen.add(tid)
         try:
-            sched = parse_schedule(tid, fetch(tid))
+            sched = parse_schedule(tid, fetch(tid, force=force))
         except Exception as e:
             print(f"  !! fetch/parse failed for t={tid}: {e}", file=sys.stderr)
             continue
         if sched.gender != want_g or sched.klass != want_class:
             continue  # wrong bucket -- don't expand, don't include
         schedules.append(sched)
-        print(f"  + {sched.school} ({sched.klass} {sched.gender}) "
-              f"{len(sched.games)} games  [t={tid}]")
+        if progress:
+            progress(sched, tid)
         for g in sched.games:
             if g.opp_id and g.opp_id not in seen:
                 q.append(g.opp_id)
     return schedules
+
+
+# --------------------------------------------------------------------------- #
+# reusable plan builders (imported by the Streamlit page; no printing)
+# --------------------------------------------------------------------------- #
+def build_plan_single(tid: int, *, force: bool = False):
+    """One team -> (Plan, [TeamSchedule])."""
+    sched = parse_schedule(tid, fetch(tid, force=force))
+    plan = Plan()
+    plan.add_game(sched)
+    return plan, [sched]
+
+
+def build_plan_crawl(seed, klass, gender, max_fetch, *, progress=None, force=False):
+    """Crawl a class -> (Plan, [TeamSchedule])."""
+    scheds = crawl(seed, klass, gender, max_fetch, progress=progress, force=force)
+    plan = Plan()
+    for s in scheds:
+        plan.add_game(s)
+    return plan, scheds
 
 
 # --------------------------------------------------------------------------- #
@@ -304,7 +327,13 @@ def main(argv=None):
             ap.error("--crawl requires --class and --gender")
         print(f"Crawling class {args.klass} {args.gender} from seed {args.crawl} "
               f"(max {args.max} teams)...")
-        for sched in crawl(args.crawl, args.klass, args.gender, args.max):
+
+        def _show(sched, tid):
+            print(f"  + {sched.school} ({sched.klass} {sched.gender}) "
+                  f"{len(sched.games)} games  [t={tid}]")
+
+        for sched in crawl(args.crawl, args.klass, args.gender, args.max,
+                           progress=_show, force=args.force):
             plan.add_game(sched)
     else:
         ap.error("pass --team <id> or --crawl <seed_id>")

@@ -18,9 +18,19 @@ which is exactly what tools.ossaa_import.Plan exposes.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from database import db
+
+# Tokens dropped when comparing a school's "identity" words (so "Riverside
+# Eagles" and "RIVERSIDE Boys" still share the token RIVERSIDE).
+_STOP_TOKENS = {"BOYS", "GIRLS", "HS", "HIGH", "SCHOOL", "THE", "OF"}
+
+
+def _norm_tokens(name: str) -> set:
+    return {t for t in re.findall(r"[A-Za-z0-9]+", name.upper())
+            if t not in _STOP_TOKENS}
 
 
 # --------------------------------------------------------------------------- #
@@ -98,16 +108,72 @@ def game_exists(team1_id: int, team2_id: int, date: str, season: str = "Current"
 
 
 # --------------------------------------------------------------------------- #
-def ingest(plan) -> dict:
-    """Write a Plan to the active DB. Returns counts. Safe to call repeatedly.
+def reconcile(plan) -> dict:
+    """Classify every team in the plan against the current DB, WITHOUT writing.
 
-    Games are inserted with tracked=0 and the default season ('Current' = the
-    active season). Already-present games are skipped, never overwritten.
+    Returns {'auto': [names], 'new': [names], 'ambiguous': [rows]} where an
+    'ambiguous' row resembles an existing team (same gender, shares an identity
+    token) but matches neither by ossaa_id nor exact name — so it's the coach's
+    call whether to merge or create. Each carries up to 5 ranked candidates:
+        {name, class, gender, ossaa_id, state, candidates:[{id,name,class,shared}]}
     """
     ensure_schema()
+    existing = db.query("SELECT id, name, class, gender, ossaa_id FROM teams")
+    by_oid = {e["ossaa_id"] for e in existing if e["ossaa_id"] is not None}
+    by_name = {e["name"].upper() for e in existing}
+    toks_by_gender = {}
+    for e in existing:
+        toks_by_gender.setdefault(e["gender"], []).append((e, _norm_tokens(e["name"])))
+
+    auto, new, ambiguous = [], [], []
+    for name, (klass, gender, oid, state) in plan.teams.items():
+        if (oid is not None and oid in by_oid) or name.upper() in by_name:
+            auto.append(name)
+            continue
+        want = _norm_tokens(name)
+        cands = []
+        for e, etoks in toks_by_gender.get(gender, []):
+            if e["name"].upper() == name.upper():
+                continue
+            shared = want & etoks
+            if shared:
+                cands.append({"id": e["id"], "name": e["name"], "class": e["class"],
+                              "shared": sorted(shared)})
+        cands.sort(key=lambda c: -len(c["shared"]))
+        if cands:
+            ambiguous.append({"name": name, "class": klass, "gender": gender,
+                              "ossaa_id": oid, "state": state, "candidates": cands[:5]})
+        else:
+            new.append(name)
+    return {"auto": auto, "new": new, "ambiguous": ambiguous}
+
+
+# --------------------------------------------------------------------------- #
+def ingest(plan, overrides=None) -> dict:
+    """Write a Plan to the active DB. Returns counts. Safe to call repeatedly.
+
+    Games are inserted with tracked=0 and season='Current'. Already-present games
+    are skipped, never overwritten.
+
+    `overrides` = {plan_team_name: existing_team_id} from reconcile()'s ambiguous
+    list — the coach's case-by-case "merge this OSSAA team onto that existing
+    team" decisions. A mapped team reuses the chosen row (back-filling its
+    ossaa_id) instead of being created fresh.
+    """
+    ensure_schema()
+    overrides = overrides or {}
 
     team_id, created_t, matched_t = {}, 0, 0
     for name, (klass, gender, oid, state) in plan.teams.items():
+        mapped = overrides.get(name)
+        if mapped:
+            if oid:  # back-fill the OSSAA id onto the team the coach picked
+                ex = db.query("SELECT ossaa_id FROM teams WHERE id=?", (mapped,))
+                if ex and not ex[0]["ossaa_id"]:
+                    db.execute("UPDATE teams SET ossaa_id=? WHERE id=?", (oid, mapped))
+            team_id[name] = mapped
+            matched_t += 1
+            continue
         tid, how = get_or_create_team(name, klass, gender, oid, state)
         team_id[name] = tid
         if how == "created":

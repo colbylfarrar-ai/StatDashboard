@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from helpers.ui import page_chrome, lab_hero as _lab_hero
-from database import db
 import helpers.ossaa_sync as SYNC
 from tools.ossaa_import import build_plan_single, build_plan_crawl
 
@@ -65,16 +64,22 @@ plan = st.session_state.get("ossaa_plan")
 if plan:
     SYNC.ensure_schema()
 
+    # Classify every team vs the current DB (no writes).
+    rec = SYNC.reconcile(plan)
+    status_of = {}
+    for n in rec["auto"]:
+        status_of[n] = "merge"
+    for n in rec["new"]:
+        status_of[n] = "new"
+    for a in rec["ambiguous"]:
+        status_of[a["name"]] = "review"
+
     team_rows = []
     for name, (k, g, oid, state) in sorted(plan.teams.items()):
-        exists = bool(oid and db.query("SELECT 1 FROM teams WHERE ossaa_id=?", (oid,)))
-        if not exists:
-            exists = bool(db.query("SELECT 1 FROM teams WHERE name=?", (name,)))
         team_rows.append({"team": name, "class": k, "gender": GMAP.get(g, "?"),
                           "state": state, "ossaa_id": oid or "",
-                          "status": "exists" if exists else "NEW"})
+                          "status": status_of.get(name, "new")})
     tdf = pd.DataFrame(team_rows)
-    new_teams = int((tdf["status"] == "NEW").sum())
 
     game_rows = [{"date": d, "home": h, "away": a,
                   "score": (f"{hs}-{as_}" if hs is not None else "—")}
@@ -83,14 +88,35 @@ if plan:
     played = sum(1 for g in plan.games if g[3] is not None)
 
     st.subheader("Plan preview")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Teams", len(tdf), f"{new_teams} new")
-    m2.metric("Games", len(gdf), f"{played} played")
-    m3.metric("Future / no-score", len(gdf) - played)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Will merge", len(rec["auto"]))
+    m2.metric("New teams", len(rec["new"]))
+    m3.metric("Needs your call", len(rec["ambiguous"]))
+    m4.metric("Games", len(gdf), f"{played} played")
 
-    with st.expander(f"Teams ({len(tdf)})"):
+    # ── case-by-case: teams that resemble an existing one but don't auto-match ──
+    overrides = {}
+    if rec["ambiguous"]:
+        st.subheader(f"⚠️ Needs your call ({len(rec['ambiguous'])})")
+        st.caption("Each OSSAA team below resembles a team you already have "
+                   "(shared name word, same gender) but matched neither by OSSAA "
+                   "id nor exact name. Map it to merge (back-fills the OSSAA id so "
+                   "future imports auto-merge), or leave **Create new team**.")
+        for a in rec["ambiguous"]:
+            opts = {0: "➕ Create new team"}
+            for c in a["candidates"]:
+                opts[c["id"]] = (f"↳ Merge into: {c['name']} ({c['class']}) "
+                                 f"· shares {', '.join(c['shared'])}")
+            sel = st.selectbox(
+                f"**{a['name']}**  ·  {a['class']} {GMAP.get(a['gender'], '?')}",
+                list(opts), format_func=lambda k: opts[k],
+                key=f"ossaa_map_{a['name']}")
+            if sel:
+                overrides[a["name"]] = sel
+
+    with st.expander(f"All teams ({len(tdf)})"):
         st.dataframe(tdf, use_container_width=True, hide_index=True)
-    with st.expander(f"Games ({len(gdf)})", expanded=True):
+    with st.expander(f"Games ({len(gdf)})", expanded=not rec["ambiguous"]):
         st.dataframe(gdf, use_container_width=True, hide_index=True)
 
     st.warning("Import writes to the **active season** DB. Existing teams are "
@@ -98,11 +124,13 @@ if plan:
                "games are skipped, never overwritten. Crawl mode imports the "
                "**whole scraped schedule** (every team + game, not just the seed "
                "team) — opponent-vs-opponent games show in league-wide Rankings.")
+    n_mapped = sum(1 for v in overrides.values() if v)
     if st.button("⬇️ Import to database", type="primary"):
         with st.spinner("Writing teams & games…"):
-            res = SYNC.ingest(plan)
+            res = SYNC.ingest(plan, overrides=overrides)
         st.success(
             f"Done — {res['teams_created']} teams created "
-            f"({res['teams_matched']} matched), {res['games_inserted']} games "
-            f"inserted ({res['games_skipped']} already present).")
+            f"({res['teams_matched']} matched, {n_mapped} mapped by you), "
+            f"{res['games_inserted']} games inserted "
+            f"({res['games_skipped']} already present).")
         st.session_state.pop("ossaa_plan", None)

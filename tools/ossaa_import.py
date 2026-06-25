@@ -50,6 +50,22 @@ CLASS_MAP = {"6A": "6A", "5A": "5A", "4A": "4A", "3A": "3A", "2A": "2A", "A": "A
              "B": "N/A"}  # site shows only "B"; app splits B1/B2 -> can't tell, default N/A
 GENDER_MAP = {"Boys": "M", "Girls": "F"}
 
+# Out-of-state opponent detection. OSSAA lists Oklahoma teams, so anything with
+# an ossaa id is 'OK'. A non-OSSAA opponent sometimes carries a trailing US
+# state code ("Garden City, KS", "Hugoton KS"). Restrict to OK's neighbours so a
+# school-type suffix like "MS" (middle school == Mississippi's code) isn't
+# misread as a state. "OKC" (3 letters) never matches the 2-letter pattern.
+NEIGHBOR_STATES = {"TX", "KS", "AR", "MO", "NM", "CO", "LA", "NE"}
+_RE_STATE = re.compile(r",?\s+([A-Z]{2})\.?\s*$")
+
+
+def detect_state(name: str) -> tuple[str, str]:
+    """'Garden City, KS' -> ('Garden City', 'KS'); anything else -> (name, 'OK')."""
+    m = _RE_STATE.search(name)
+    if m and m.group(1) in NEIGHBOR_STATES:
+        return name[:m.start()].rstrip(" ,").strip(), m.group(1)
+    return name, "OK"
+
 
 # --------------------------------------------------------------------------- #
 # fetch (with on-disk cache so re-runs don't re-hit the site)
@@ -193,21 +209,27 @@ def app_team_name(school: str, gender: str) -> str:
 
 @dataclass
 class Plan:
-    teams: dict = field(default_factory=dict)   # app_name -> (class, gender, ossaa_id|None)
+    teams: dict = field(default_factory=dict)   # app_name -> (class, gender, ossaa_id|None, state)
     games: list = field(default_factory=list)   # (date, home_name, away_name, hs, as, tracked)
     seen_game_keys: set = field(default_factory=set)
 
-    def add_team(self, name, klass, gender, ossaa_id=None):
+    def add_team(self, name, klass, gender, ossaa_id=None, state="OK"):
         if name not in self.teams:
-            self.teams[name] = (klass, gender, ossaa_id)
+            self.teams[name] = (klass, gender, ossaa_id, state)
 
     def add_game(self, sched: TeamSchedule):
         gender = sched.gender
         me = app_team_name(sched.school, gender)
-        self.add_team(me, sched.klass, gender, sched.tid)
+        self.add_team(me, sched.klass, gender, sched.tid, "OK")
         for g in sched.games:
-            opp = app_team_name(g.opp_name, gender)
-            self.add_team(opp, g.opp_class, gender, g.opp_id)
+            # OSSAA-listed opponents are Oklahoma; only sniff a state off the
+            # name for non-OSSAA opponents (and strip it from the name).
+            if g.opp_id:
+                opp_name, state = g.opp_name, "OK"
+            else:
+                opp_name, state = detect_state(g.opp_name)
+            opp = app_team_name(opp_name, gender)
+            self.add_team(opp, g.opp_class, gender, g.opp_id, state)
             if g.home_away == "Home":
                 home, away, hs, as_ = me, opp, g.team_score, g.opp_score
             else:
@@ -279,10 +301,10 @@ def print_plan(plan: Plan):
     print("\n=== TEAMS the importer would create / ensure "
           f"({len(plan.teams)}) ===")
     for name in sorted(plan.teams):
-        klass, gender, oid = plan.teams[name]
+        klass, gender, oid, state = plan.teams[name]
         gl = {"M": "Boys", "F": "Girls"}.get(gender, "?")
         oid_s = f"ossaa#{oid}" if oid else "(non-OSSAA)"
-        print(f"  {name:<34} class={klass:<4} {gl:<5} {oid_s}")
+        print(f"  {name:<34} class={klass:<4} {gl:<5} {state:<3} {oid_s}")
 
     played = [g for g in plan.games if g[3] is not None]
     future = [g for g in plan.games if g[3] is None]

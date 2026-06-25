@@ -66,12 +66,13 @@ if plan:
     SYNC.ensure_schema()
 
     team_rows = []
-    for name, (k, g, oid) in sorted(plan.teams.items()):
+    for name, (k, g, oid, state) in sorted(plan.teams.items()):
         exists = bool(oid and db.query("SELECT 1 FROM teams WHERE ossaa_id=?", (oid,)))
         if not exists:
             exists = bool(db.query("SELECT 1 FROM teams WHERE name=?", (name,)))
         team_rows.append({"team": name, "class": k, "gender": GMAP.get(g, "?"),
-                          "ossaa_id": oid or "", "status": "exists" if exists else "NEW"})
+                          "state": state, "ossaa_id": oid or "",
+                          "status": "exists" if exists else "NEW"})
     tdf = pd.DataFrame(team_rows)
     new_teams = int((tdf["status"] == "NEW").sum())
 

@@ -35,6 +35,12 @@ def ensure_schema() -> None:
     except sqlite3.OperationalError:
         pass  # duplicate column -> already migrated
     try:
+        # Home state (default OK). Normally added by db.py's migration list; ensured
+        # here too so the importer is self-sufficient if it runs first.
+        db.execute("ALTER TABLE teams ADD COLUMN state TEXT NOT NULL DEFAULT 'OK'")
+    except sqlite3.OperationalError:
+        pass
+    try:
         # NULL ossaa_id is allowed for many teams (non-OSSAA opponents); a partial
         # unique index keeps real ids unique without blocking those NULLs.
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_ossaa_id "
@@ -44,11 +50,12 @@ def ensure_schema() -> None:
 
 
 # --------------------------------------------------------------------------- #
-def get_or_create_team(name: str, klass: str, gender: str, ossaa_id=None):
+def get_or_create_team(name: str, klass: str, gender: str, ossaa_id=None, state="OK"):
     """Return (team_id, 'matched'|'created').
 
     Match priority: ossaa_id, then exact name. On a name match that lacks an
-    ossaa_id we back-fill it. class/gender of an existing team are never touched.
+    ossaa_id we back-fill it. class/gender/state of an existing team are never
+    touched (the user may have corrected them).
     """
     if ossaa_id:
         r = db.query("SELECT id FROM teams WHERE ossaa_id=?", (ossaa_id,))
@@ -63,8 +70,8 @@ def get_or_create_team(name: str, klass: str, gender: str, ossaa_id=None):
         return tid, "matched"
 
     tid = db.execute(
-        "INSERT INTO teams (name, class, gender, ossaa_id) VALUES (?,?,?,?)",
-        (name, klass, gender, ossaa_id))
+        "INSERT INTO teams (name, class, gender, ossaa_id, state) VALUES (?,?,?,?,?)",
+        (name, klass, gender, ossaa_id, state))
     return tid, "created"
 
 
@@ -87,8 +94,8 @@ def ingest(plan) -> dict:
     ensure_schema()
 
     team_id, created_t, matched_t = {}, 0, 0
-    for name, (klass, gender, oid) in plan.teams.items():
-        tid, how = get_or_create_team(name, klass, gender, oid)
+    for name, (klass, gender, oid, state) in plan.teams.items():
+        tid, how = get_or_create_team(name, klass, gender, oid, state)
         team_id[name] = tid
         if how == "created":
             created_t += 1

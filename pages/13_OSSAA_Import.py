@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from helpers.ui import page_chrome, lab_hero as _lab_hero
+import helpers.auth as AUTH
 import helpers.ossaa_sync as SYNC
 from tools.ossaa_import import build_plan_single, build_plan_crawl
 
@@ -13,6 +14,15 @@ _cfg, ACCENT = page_chrome("OSSAA Import")
 _lab_hero("OSSAA Import", phase="BUILD",
           sub="Pull team schedules from ossaarankings.com and turn them into "
               "teams + games. Preview first — nothing is written until you import.")
+
+# Admin-only: a bulk write of teams + games into the SHARED league DB (it feeds
+# every coach's league-wide rankings), and the per-team merge decisions below
+# need a single trusted hand. Mirrors the admin idiom in change_requests.py.
+if (AUTH.current_user() or {}).get("role") != "admin":
+    st.warning("🔒 OSSAA import is **admin-only** — it bulk-writes teams & games "
+               "to the shared league database and resolves team-merge decisions. "
+               "Ask an admin to run an import.")
+    st.stop()
 
 CLASS_OPTIONS = ["6A", "5A", "4A", "3A", "2A", "A"]
 GENDER_OPTIONS = ["Boys", "Girls"]

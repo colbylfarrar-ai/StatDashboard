@@ -487,8 +487,8 @@ def render(ctx):
                 f"{lbl} {p.get(k)}" for k, lbl in
                 (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))
                 if p.get(k) is not None)
-            bd_html = (f"<br><span style='font-size:12px;color:#8b949e'>{_bd}</span>"
-                       if _bd else "")
+            bd_html = (f"<br><span style='font-size:12px;color:#8b949e'>{_bd} "
+                       f"(0–100, 50 = league avg)</span>" if _bd else "")
             # measurables: height · weight · wingspan · hand
             pos_html = (f" <span style='color:#8b949e;font-size:12px'>"
                         f"{html.escape(p['pos'])}</span>" if p.get("pos") else "")

@@ -781,7 +781,9 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             br = [(lbl, p.get(k)) for k, lbl in
                   (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))]
             br = [f"{lbl} {v}" for lbl, v in br if v is not None]
-            brk = f"<div class='brk'>{e(' · '.join(br))}</div>" if br else ""
+            brk = (f"<div class='brk'>{e(' · '.join(br))} "
+                   f"<span style='color:#8b949e'>(0–100, 50 = lg avg)</span></div>"
+                   if br else "")
             tp = f"{p['tp']:.0f}%" if p.get("tp") is not None else "—"
             ts = f"{p['ts']:.0f}%" if p.get("ts") is not None else "—"
             _usg = f" · USG {p['usg']:.0f}%" if p.get("usg") is not None else ""

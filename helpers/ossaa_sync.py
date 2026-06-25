@@ -62,25 +62,38 @@ def get_or_create_team(name: str, klass: str, gender: str, ossaa_id=None, state=
         if r:
             return r[0]["id"], "matched"
 
-    r = db.query("SELECT id, ossaa_id FROM teams WHERE name=?", (name,))
+    # Case-insensitive so a hand-entered "riverside boys" merges with the
+    # importer's "RIVERSIDE Boys" instead of duplicating (teams.name is BINARY).
+    r = db.query("SELECT id, ossaa_id FROM teams WHERE name=? COLLATE NOCASE", (name,))
     if r:
         tid = r[0]["id"]
         if ossaa_id and not r[0]["ossaa_id"]:
             db.execute("UPDATE teams SET ossaa_id=? WHERE id=?", (ossaa_id, tid))
         return tid, "matched"
 
-    tid = db.execute(
-        "INSERT INTO teams (name, class, gender, ossaa_id, state) VALUES (?,?,?,?,?)",
-        (name, klass, gender, ossaa_id, state))
-    return tid, "created"
+    try:
+        tid = db.execute(
+            "INSERT INTO teams (name, class, gender, ossaa_id, state) VALUES (?,?,?,?,?)",
+            (name, klass, gender, ossaa_id, state))
+        return tid, "created"
+    except sqlite3.IntegrityError:
+        # UNIQUE(name) collision (case-variant, or two schools that resolve to the
+        # same suffixed name). Treat as an existing team rather than aborting the
+        # whole import batch.
+        r = db.query("SELECT id FROM teams WHERE name=? COLLATE NOCASE", (name,))
+        if r:
+            return r[0]["id"], "matched"
+        raise
 
 
-def game_exists(team1_id: int, team2_id: int, date: str) -> bool:
-    """True if that matchup already exists on that date, either home/away order."""
+def game_exists(team1_id: int, team2_id: int, date: str, season: str = "Current") -> bool:
+    """True if that matchup already exists on that date IN THIS SEASON, either
+    home/away order. Season-scoped so the same fixture can legitimately recur in a
+    later season (and so a post-rollover re-import isn't blocked by an archived row)."""
     r = db.query(
-        "SELECT id FROM games WHERE date=? AND "
+        "SELECT id FROM games WHERE date=? AND season=? AND "
         "((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))",
-        (date, team1_id, team2_id, team2_id, team1_id))
+        (date, season, team1_id, team2_id, team2_id, team1_id))
     return bool(r)
 
 
@@ -111,8 +124,8 @@ def ingest(plan) -> dict:
             continue
         db.execute(
             "INSERT INTO games (team1_id, team2_id, date, location, "
-            "home_score, away_score, tracked) VALUES (?,?,?,?,?,?,?)",
-            (h, a, iso, None, hs, as_, tracked))
+            "home_score, away_score, tracked, season) VALUES (?,?,?,?,?,?,?,?)",
+            (h, a, iso, None, hs, as_, tracked, "Current"))
         inserted += 1
 
     return {"teams_created": created_t, "teams_matched": matched_t,

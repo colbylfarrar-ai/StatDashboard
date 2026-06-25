@@ -94,8 +94,10 @@ if plan:
         st.dataframe(gdf, use_container_width=True, hide_index=True)
 
     st.warning("Import writes to the **active season** DB. Existing teams are "
-               "matched (by OSSAA id or exact name); existing games are skipped, "
-               "never overwritten.")
+               "matched (by OSSAA id, else name — case-insensitive); existing "
+               "games are skipped, never overwritten. Crawl mode imports the "
+               "**whole scraped schedule** (every team + game, not just the seed "
+               "team) — opponent-vs-opponent games show in league-wide Rankings.")
     if st.button("⬇️ Import to database", type="primary"):
         with st.spinner("Writing teams & games…"):
             res = SYNC.ingest(plan)

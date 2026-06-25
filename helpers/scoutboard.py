@@ -103,3 +103,22 @@ def render_intel(team_id, *, key_prefix="si") -> list:
         st.success("Key players saved.")
         return get_intel(team_id)
     return cur
+
+
+# ── matchup plan (per-coach): {their_scorer_key: my_defender_pid} per opponent ──
+# Stored in coach_notes under kind='matchup' as JSON, keyed by the OPPONENT team_id
+# (the team_id arg). Lets a coach save "put my #4 on their #11" assignments. No
+# schema change.
+def get_plan(team_id, email=None) -> dict:
+    raw = get_note(team_id, kind="matchup", email=email)
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_plan(team_id, plan, email=None) -> None:
+    save_note(team_id, json.dumps(plan or {}), kind="matchup", email=email)

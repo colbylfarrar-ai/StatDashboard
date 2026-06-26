@@ -1828,7 +1828,8 @@ def _fx_evr():
             _style(kp, 460)
             st.plotly_chart(kp, width="stretch", key="lab_kenpom")
             st.caption("For a single team's gauges and Team-DNA radar, open that "
-                       "team in **Team Analytics → Advanced → Efficiency & DNA**.")
+                       "team in **Team Dashboard → Lab → Advanced** (Efficiency & "
+                       "DNA).")
         else:
             empty_state("No tracked games yet",
                         "Track games to unlock the possession-based KenPom map.")

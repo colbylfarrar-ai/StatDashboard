@@ -680,10 +680,15 @@ def _shot_model(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _spacing(g, tid):
+def _spacing(g, tid, vis=None):
     """Floor-spacing index — located-shot (x,y) blend vs the gender league pool.
+    `vis` (the team's visible tracked games; None = own team / admin = full)
+    read-filters the TEAM's own components so a league-wide scout never aggregates
+    its non-pooled Solo games — the percentile pool stays gender-wide.
     None until the team + pool clear the volume gates (graceful while thin)."""
-    return SPACE.spacing_index(tid, gender=g)
+    return SPACE.spacing_index(
+        tid, gender=g,
+        team_game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner="Computing RAPM…")
@@ -711,19 +716,24 @@ def _shot_quality(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _rotation(tid):
+def _rotation(tid, vis=None):
     """Stagger coverage (star floor-time + bench-only net bleed) + season foul-prone
-    list for one team (Tier 2, ML_LAYER_ROADMAP). Cached on team id."""
+    list for one team (Tier 2, ML_LAYER_ROADMAP). `vis` read-filters to the viewer's
+    visible games for this team (None = own/admin = full). Only reached when
+    has_tracked, so vis is None or a non-empty pooled set — never empty."""
     import helpers.rotation_plan as RP
-    return RP.star_coverage(tid), RP.foul_prone(tid)
+    gids = list(vis) if vis else None
+    return RP.star_coverage(tid, game_ids=gids), RP.foul_prone(tid, game_ids=gids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _poss_ledger(tid):
+def _poss_ledger(tid, vis=None):
     """Possession-value ledger (points/100 sources + outcome mix, offense & allowed)
-    for one team (Tier 2, ML_LAYER_ROADMAP). Cached on team id."""
+    for one team (Tier 2, ML_LAYER_ROADMAP). `vis` read-filters to the viewer's
+    visible games (None = own/admin = full); only reached when has_tracked."""
     import helpers.possession_value as PVL
-    return PVL.team_ledger(tid)
+    gids = list(vis) if vis else None
+    return PVL.team_ledger(tid, game_ids=gids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1387,7 +1397,7 @@ if _tdview == "Charts":
                 ["Shot Profile", "Contest", "Creation & Shot-making"])
             with _shp:
                 # ── floor-spacing index (located-shot x,y blend vs league) ────
-                _sp = _spacing(gender, team_id)
+                _sp = _spacing(gender, team_id, _vis_key)
                 if _sp.get("index") is not None:
                     st.markdown("<div class='lab-hdr'>Floor-spacing index</div>",
                                 unsafe_allow_html=True)
@@ -3664,7 +3674,7 @@ if _tdview == "Lab":
                         })
 
             # ── rotation: stagger coverage + foul trouble (Tier 2) ──────────
-            _cov, _prone = _rotation(team_id)
+            _cov, _prone = _rotation(team_id, _vis_key)
             if _cov.get("bleed") is not None or _prone:
                 st.markdown("<div class='lab-hdr'>Rotation — stagger &amp; foul "
                             "trouble</div>", unsafe_allow_html=True)
@@ -3690,7 +3700,7 @@ if _tdview == "Lab":
                         for r in _prone[:5]))
 
             # ── possession-value ledger: points/100 sources vs leaks (Tier 2) ─
-            _pl = _poss_ledger(team_id)
+            _pl = _poss_ledger(team_id, _vis_key)
             if _pl["offense"] or _pl["defense"]:
                 st.markdown("<div class='lab-hdr'>Possession value — where points "
                             "come from vs leak</div>", unsafe_allow_html=True)

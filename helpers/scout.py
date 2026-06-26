@@ -1297,5 +1297,5 @@ table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
 {pers_html}
 {diag_html}
 <div class='foot'>Made with <b style='color:#f0a500'>HoopTracks</b> ·
-  hooptracks.com{(' · ' + today) if today else ''}</div>
+  app.hooptracks.com{(' · ' + today) if today else ''}</div>
 </div></body></html>"""

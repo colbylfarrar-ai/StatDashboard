@@ -272,7 +272,8 @@ def results_fingerprint():
 
 
 def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                  reg=DEFAULT_REG, sos_weight=DEFAULT_SOS_WEIGHT, game_ids=None):
+                  reg=DEFAULT_REG, sos_weight=DEFAULT_SOS_WEIGHT, game_ids=None,
+                  season="Current"):
     """
     Results-only power ratings for every team in `gender` (None = all).
     Returns {team_id: {...}} with, per team:
@@ -288,7 +289,7 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
     `sos_weight` is the points-per-SD schedule-strength nudge folded into Rating
     (standardized; see DEFAULT_SOS_WEIGHT); 0 reproduces pure AdjNet+Class.
     """
-    games = _finished_games(gender=gender, game_ids=game_ids)
+    games = _finished_games(gender=gender, game_ids=game_ids, season=season)
     meta = _team_meta(gender=gender)
     tg = _per_team_games(games)
     if not tg:
@@ -365,7 +366,8 @@ def _tracked_team_game_boxes(games):
 
 
 def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                    reg=DEFAULT_REG, game_ids=None, sos_weight=DEFAULT_SOS_WEIGHT):
+                    reg=DEFAULT_REG, game_ids=None, sos_weight=DEFAULT_SOS_WEIGHT,
+                    season="Current"):
     """
     Advanced, possession-based power ratings over tracked games only.
     `game_ids` is the entitlement read-filter (see _finished_games): a League-wide
@@ -383,7 +385,8 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
     Efficiency uses authoritative final scores for points and stats-engine
     possessions; shooting comes straight from the box.
     """
-    games = _finished_games(gender=gender, tracked_only=True, game_ids=game_ids)
+    games = _finished_games(gender=gender, tracked_only=True, game_ids=game_ids,
+                            season=season)
     meta = _team_meta(gender=gender)
     if not games:
         return {}

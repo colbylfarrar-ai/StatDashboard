@@ -268,14 +268,40 @@ function showScreen(name) {
 
 let allGames = [];
 
+let _gameSearchTimer = null;
+
 function applyGameFilter() {
   const el = $('game-search');
-  const q = ((el && el.value) || '').trim().toLowerCase();
-  const list = !q ? allGames : allGames.filter(function (g) {
+  const q = ((el && el.value) || '').trim();
+  if (q.length < 2) {                 // no query -> the soft default list
+    clearTimeout(_gameSearchTimer);
+    renderGames(allGames);
+    return;
+  }
+  // Instant client-side filter over the loaded (soft) set for fast feedback…
+  const ql = q.toLowerCase();
+  renderGames(allGames.filter(function (g) {
     return ((g.home || '') + ' ' + (g.away || '') + ' ' + (g.date || ''))
-      .toLowerCase().indexOf(q) !== -1;
-  });
-  renderGames(list);
+      .toLowerCase().indexOf(ql) !== -1;
+  }));
+  // …then a season-scoped SERVER search so a game outside the soft set (an
+  // untracked past game, an old-dated current game) is still reachable. The
+  // default picker only soft-loads tracked/recent games, so client-side alone
+  // can't find everything — this is why search "only showed current" before.
+  clearTimeout(_gameSearchTimer);
+  _gameSearchTimer = setTimeout(async function () {
+    try {
+      const url = '/api/games?q=' + encodeURIComponent(q)
+        + '&season=' + encodeURIComponent(currentSeason || 'Current');
+      const res = await api(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      // ignore a stale response if the box changed while we were fetching
+      if ((($('game-search') || {}).value || '').trim() === q) {
+        renderGames(data.games || []);
+      }
+    } catch (e) { /* offline: keep the client-side filtered list */ }
+  }, 220);
 }
 
 /* season the game picker browses ('Current' = active season). Past seasons let

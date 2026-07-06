@@ -27,6 +27,32 @@ around ~15 games; accept that season-1 priors are thin.
 - No depth-chart minutes, no lineup optimizer, no team season projection — those are
   separate specs that consume this one.
 - No new page — player-card tab only.
+- **Intrinsic-only.** Projects player-**intrinsic** rates (efficiency/skill) only.
+  It does NOT project usage, minutes, raw volume, or raw scoring — those are
+  *environment-dependent* (a function of who else is on the floor) and are only
+  meaningful once the roster is known. See "Intrinsic vs environment-dependent" below.
+- **No usage redistribution / roster-turnover accounting.** Usage is zero-sum at the
+  team level (on-court shares sum to ~100%); when a rotation player leaves, his share
+  must flow to returners. That constraint can only be enforced with a known roster, so
+  it lives in the downstream **depth-chart / season-projection** spec, not here.
+  Transfer re-contextualization (a transfer is just a returner this roster hasn't seen)
+  uses the same redistribution machinery and is deferred to the same layer.
+- **Class stored, not modeled.** Player class/grade is captured and passed through in
+  the output, but NO aging curve is applied. With one season there is no longitudinal
+  signal to learn growth from; any freshman-jump/senior-curve would be invented, not
+  learned. A class-aging model is deferred to the year-to-year layer.
+
+## Intrinsic vs environment-dependent (what travels flat)
+
+| Player-intrinsic — projected here (travels with the player) | Environment-dependent — deferred to roster-aware layer |
+|---|---|
+| SC%, SMOE, pass%, RimDef, PerimDef | usage, minutes, SC volume, raw scoring |
+| eFG%/shooting eff, TOV rate, OREB rate, FTR (all **rates**) | anything that is a *share* of the team's on-court total |
+
+Efficiency and skill rates are stable properties of the player and carry across
+rosters/seasons. Volume and usage are shares of a fixed team pie — they redistribute
+when the roster changes, so projecting them flat double-counts a departed player's
+share. Base layer stays on the left column.
 
 ## Architecture
 
@@ -85,7 +111,7 @@ project_roster(team_id, gender=None, game_ids=None) -> {pid: projection}
 
 ```python
 {
-  "pid": int, "name": str, "archetype": str,
+  "pid": int, "name": str, "archetype": str, "class": str | None,  # class passed through, not modeled
   "games": int, "poss": int,
   "confidence": {"tier","label","frac","ci"},   # from rating_confidence
   "stats": {
@@ -107,12 +133,13 @@ project_roster(team_id, gender=None, game_ids=None) -> {pid: projection}
 pass them into each `project_player` (the `table`/`priors` params) so the roster call is
 one table build, not N.
 
-### v1 stat set
+### v1 stat set (intrinsic rates only)
 
-The leaves that feed the 4 factors + win formula + the named list: **SC, usage, SC%,
-pass%, SMOE, RimDef, PerimDef**, plus the 4-factor contributors already in the table
-(eFG, TOV, OREB, FTR). Each classified as make/att (→`stabilize_rate`) or
-volume-rate (→`stabilize_value`) by its natural denominator; a single `_STAT_SPECS`
+The player-**intrinsic** leaves: **SC%, pass%, SMOE, RimDef, PerimDef**, plus the
+4-factor **rate** contributors (eFG%, TOV rate, OREB rate, FTR). Explicitly **excluded**
+(deferred to the roster-aware layer): usage, SC volume, minutes, raw scoring — every
+share-of-team quantity. Each included stat is classified make/att (→`stabilize_rate`)
+or volume-rate (→`stabilize_value`) by its natural denominator; a single `_STAT_SPECS`
 table maps stat → (kind, made_key, att_key | volume_key). Adding a stat = one row.
 
 ### Career aggregation (season-forward hook)

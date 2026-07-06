@@ -1258,6 +1258,11 @@ async function logFT(result) {
   ev.primary_player_id = f.shooter;
   ev.shot_result = result;
   ev.rebound_by_id = f.details.rebound_by_id;
+  // An FT is a dead-ball possession — never a set call or defensive scheme.
+  // Drop the sticky defense baseEvent copied in (play_type is already null);
+  // the server gates this too, but keep the queued/offline payload clean.
+  ev.play_type = null;
+  ev.defense = null;
   await queueEvent(ev);
   toast('FT ' + result + ' — ' + pLabel(ev.primary_player_id));
   resetFlow('ft');

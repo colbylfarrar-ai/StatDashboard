@@ -123,15 +123,26 @@ button {
 .chip.away { border-left: 3px solid var(--muted); }
 .chip.sel { background: var(--gold); border-color: var(--gold); color: var(--bg); font-weight: 700; }
 .chip.archived { opacity: 0.55; }
-/* per-player shooting-hand toggle: small pill that sits next to a player chip */
-.chip.hand-toggle {
-  min-height: 44px;
-  padding: 8px 10px;
-  font-size: 0.78rem;
-  background: var(--bg2);
-  color: var(--muted);
-  margin-left: -4px;
+/* ---- lineup action row: '+ Add player' and '✋ Hands' sit side by side ---- */
+.lineup-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.lineup-actions .add-btn { margin-top: 0; }
+
+/* ---- per-team shooting-hand editor (revealed table; clean roster) ---- */
+.hands-table { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 6px; }
+.hands-table[hidden] { display: none; }
+.hand-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 6px 10px;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 10px;
 }
+.hand-row-name { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hand-seg { display: flex; gap: 4px; flex: none; }
+.chip.hand-opt {
+  min-height: 40px; min-width: 44px; padding: 6px 0; text-align: center;
+  font-size: 0.85rem; background: var(--bg3); color: var(--muted);
+}
+.chip.hand-opt.sel { background: var(--gold); border-color: var(--gold); color: var(--bg); font-weight: 700; }
+.gender-filter { margin: 4px 0 10px; }
 
 /* compact horizontally scrollable chip rows (always-on detail pickers) */
 .chips.scroll {
@@ -258,7 +269,8 @@ button {
 .q-stepper { display: flex; align-items: center; gap: 4px; }
 .q-stepper span { min-width: 38px; text-align: center; font-weight: 700; }
 
-.clock { display: flex; align-items: center; gap: 2px; }
+.clock { display: flex; align-items: center; justify-content: center; gap: 3px; margin: 8px 0; }
+.clock-colon { margin: 0 4px; font-weight: 700; }
 .clock input {
   width: 54px;
   min-height: 44px;
@@ -276,6 +288,17 @@ button {
 #clk-toggle { color: var(--green); border-color: var(--green); }
 #clk-toggle.running { color: var(--red); border-color: var(--red); background: var(--bg3); }
 #btn-subs.active { background: var(--gold); color: var(--bg); border-color: var(--gold); }
+/* in-place subs panel (tracker screen) */
+#subs-panel { background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
+#subs-panel[hidden] { display: none; }
+.subs-group { margin-bottom: 10px; }
+.subs-group .chip-label { margin-bottom: 6px; }
+.subs-foot { margin-top: 4px; }
+/* quick / full-detail toggle row, right-aligned above the flow */
+#flow-opts { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+#flow-opts:empty { display: none; }
+#quick-toggle.active { color: var(--gold); border-color: var(--gold); }
+.flow-more { display: block; margin: 2px auto 6px; }
 .game-search {
   width: 100%;
   min-height: 44px;
@@ -331,21 +354,8 @@ button {
 #defense-bar:empty { display: none; }
 #defense-bar .chip-label { display: inline-block; margin: 0 0 4px; }
 
-/* in-place subs panel (tracker screen) */
-#subs-panel { background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
-#subs-panel[hidden] { display: none; }
-.subs-group { margin-bottom: 10px; }
-.subs-group .chip-label { margin-bottom: 6px; }
-.subs-foot { margin-top: 4px; }
-
-/* quick / full-detail toggle row, right-aligned above the flow */
-#flow-opts { display: flex; justify-content: flex-end; margin-bottom: 6px; }
-#flow-opts:empty { display: none; }
-#quick-toggle.active { color: var(--gold); border-color: var(--gold); }
-
 #flow { background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 10px; min-height: 70px; }
 #flow .no-loc { display: block; margin: 0 auto 6px; }
-.flow-more { display: block; margin: 2px auto 6px; }
 .chip-row { margin-bottom: 10px; }
 .chip-label { display: block; color: var(--muted); font-size: 0.8rem; margin-bottom: 4px; }
 
@@ -375,6 +385,9 @@ button {
   color: var(--bg);
   font-weight: 600;
 }
+/* the [hidden] attr must beat the display:flex above (else the banner shows in
+   standalone and the dismiss X can't hide it) — id+attr outspecifies plain id */
+#ios-banner[hidden] { display: none; }
 #ios-banner button { background: none; border: none; color: var(--bg); font-size: 1rem; min-width: 44px; min-height: 44px; }
 
 #toast {
@@ -394,3 +407,40 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ── courtside whiteboard overlay (wb.js) — Board button in the tracker header ── */
+#wb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;                    /* above toast (30) — it's a full takeover */
+  background: var(--bg, #0b0d13);
+  display: flex;
+  flex-direction: column;
+  padding: calc(8px + env(safe-area-inset-top)) 8px
+           calc(8px + env(safe-area-inset-bottom));
+  gap: 8px;
+}
+#wb-overlay[hidden] { display: none; }   /* the ios-banner lesson: beat the flex */
+#wb-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.wb-sep { width: 1px; height: 22px; background: var(--bg3, #2a2f3a); }
+#wb-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#wb-frame {
+  position: relative;
+  background: #12141e;
+  border: 1px solid var(--bg3, #2a2f3a);
+  border-radius: 12px;
+  overflow: hidden;
+}
+#wb-frame canvas { position: absolute; inset: 0; display: block; }
+#wb-draw { touch-action: none; }

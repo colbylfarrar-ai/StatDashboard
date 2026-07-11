@@ -45,9 +45,12 @@
       class: 'court-svg',
       'aria-label': 'half court'
     });
-    // Flip so feet-y grows UP from the baseline at the bottom: svgY = 37 - feetY
-    // (feet y=-1 -> svg 38 (bottom edge), feet y=38 -> svg -1 (top edge))
-    group = el('g', { transform: 'scale(1,-1) translate(0,-37)' });
+    // View: half-court at the bottom, rim at the top (180° of the old baseline-up
+    // view). Arcs keep their authored sweep flags because rotate() is a pure
+    // rotation, not a reflection. The left/right *logic* (tap left = LW) is handled
+    // in app.js onCourtTap, NOT here — the drawn court is left/right symmetric, so
+    // the view stays put and only the stored coordinate is flipped.
+    group = el('g', { transform: 'rotate(180, 0, 18.5) scale(1,-1) translate(0,-37)' });
 
     const line = (x1, y1, x2, y2, cls) =>
       group.appendChild(el('line', { x1: x1, y1: y1, x2: x2, y2: y2, class: cls || 'court-line' }));

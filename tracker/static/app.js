@@ -7,6 +7,7 @@
 const LS = {
   token: 'tracker_token',
   games: 'tracker_games',
+  genderFilter: 'tracker_gender_filter',   // '' = All, 'M' = Boys, 'F' = Girls
   state: 'tracker_state',
   roster: function (gid) { return 'tracker_roster_' + gid; },
   game: function (gid) { return 'tracker_game_' + gid; },   // per-game lineup/quarter/clock
@@ -52,6 +53,7 @@ const S = {
   clockSec: 0,
   clockRunning: false,                          // running game clock (never persisted across reload)
   defense: null,                                // sticky "current defense" tag (see DEFENSES)
+  playType: null,                               // sticky "current set call" (see PLAY_TYPES) — stamps shots, TOs AND fouls
   lastLive: Object.assign({}, EMPTY_LIVE),      // last synced server state (never includes queue)
   queue: [],                                    // unsynced events for current game, oldest first
   flushing: false,
@@ -75,7 +77,17 @@ function api(path, opts) {
   let token = null;
   try { token = localStorage.getItem(LS.token); } catch (e) {}
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  return fetch(path, Object.assign({}, opts, { headers: headers }));
+  return fetch(path, Object.assign({}, opts, { headers: headers }))
+    .then(function (res) { _lastReached = Date.now(); return res; });
+}
+
+// navigator.onLine is unreliable on iOS standalone PWAs — it can report offline
+// while the network works fine, which greys the status dot and makes every
+// online-gated action refuse with "Needs connection". Trust onLine when true;
+// otherwise treat a real server reply within the last 60s as online.
+let _lastReached = 0;
+function isOnline() {
+  return navigator.onLine || (Date.now() - _lastReached) < 60000;
 }
 
 /* ---------- IndexedDB queue ---------- */
@@ -268,40 +280,77 @@ function showScreen(name) {
 
 let allGames = [];
 
-let _gameSearchTimer = null;
+// Boys/Girls/All filter for the setup screen — narrows the resume-game list AND
+// the new-game team picker for coaches who staff both genders. Persisted; '' = All.
+const GENDERS = [['', 'All'], ['M', 'Boys'], ['F', 'Girls']];
 
+function genderFilter() { return lsGet(LS.genderFilter, ''); }
+
+function renderGenderFilter() {
+  const box = $('gender-filter');
+  if (!box) return;
+  box.innerHTML = '';
+  const cur = genderFilter();
+  GENDERS.forEach(function (g) {
+    box.appendChild(flowBtn(g[1], 'chip' + (cur === g[0] ? ' sel' : ''), function () {
+      lsSet(LS.genderFilter, g[0]);
+      renderGenderFilter();
+      applyGameFilter();
+      if (NG.open) renderNewGame();    // refilter the new-game team chips too
+    }));
+  });
+}
+
+function _genderKeep(g, gf) {
+  // stale-cache games may lack gender — never hide those.
+  return !(gf && g.gender && g.gender !== gf);
+}
+
+let _searchTimer = null;
 function applyGameFilter() {
   const el = $('game-search');
-  const q = ((el && el.value) || '').trim();
-  if (q.length < 2) {                 // no query -> the soft default list
-    clearTimeout(_gameSearchTimer);
-    renderGames(allGames);
+  const raw = ((el && el.value) || '').trim();
+  const gf = genderFilter();
+  if (raw.length >= 2) {
+    // Server-side search so ANY team's games are reachable — the default list
+    // is intentionally bounded (current-season tracked/recent), so type a team
+    // name to pull that team's games from the full schedule.
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(function () { searchGames(raw); }, 250);
     return;
   }
-  // Instant client-side filter over the loaded (soft) set for fast feedback…
-  const ql = q.toLowerCase();
-  renderGames(allGames.filter(function (g) {
-    return ((g.home || '') + ' ' + (g.away || '') + ' ' + (g.date || ''))
-      .toLowerCase().indexOf(ql) !== -1;
-  }));
-  // …then a season-scoped SERVER search so a game outside the soft set (an
-  // untracked past game, an old-dated current game) is still reachable. The
-  // default picker only soft-loads tracked/recent games, so client-side alone
-  // can't find everything — this is why search "only showed current" before.
-  clearTimeout(_gameSearchTimer);
-  _gameSearchTimer = setTimeout(async function () {
-    try {
-      const url = '/api/games?q=' + encodeURIComponent(q)
-        + '&season=' + encodeURIComponent(currentSeason || 'Current');
-      const res = await api(url);
-      if (!res.ok) return;
+  renderGames(allGames.filter(function (g) { return _genderKeep(g, gf); }));
+}
+
+async function searchGames(raw) {
+  const gf = genderFilter();
+  $('setup-status').textContent = 'Searching…';
+  try {
+    // Scope the search to the season the picker is browsing — without this the
+    // server defaults to 'Current', so a past-season search "only showed current".
+    const res = await api('/api/games?q=' + encodeURIComponent(raw)
+      + '&season=' + encodeURIComponent(currentSeason || 'Current'));
+    if (res.ok) {
       const data = await res.json();
-      // ignore a stale response if the box changed while we were fetching
-      if ((($('game-search') || {}).value || '').trim() === q) {
-        renderGames(data.games || []);
-      }
-    } catch (e) { /* offline: keep the client-side filtered list */ }
-  }, 220);
+      const list = (data.games || []).filter(function (g) { return _genderKeep(g, gf); });
+      renderGames(list);
+      $('setup-status').textContent = list.length ? '' : 'No games match “' + raw + '”';
+    } else if (res.status === 401) {
+      const tb = $('token-box'); if (tb) tb.open = true;
+      $('setup-status').textContent = 'Enter your tracker token above to search.';
+    } else {
+      $('setup-status').textContent = 'Search failed';
+    }
+  } catch (e) {
+    // offline — fall back to filtering whatever's already loaded
+    const ql = raw.toLowerCase();
+    renderGames(allGames.filter(function (g) {
+      return _genderKeep(g, gf) &&
+        ((g.home || '') + ' ' + (g.away || '') + ' ' + (g.date || ''))
+          .toLowerCase().indexOf(ql) !== -1;
+    }));
+    $('setup-status').textContent = 'Offline — searching loaded games only';
+  }
 }
 
 /* season the game picker browses ('Current' = active season). Past seasons let
@@ -334,6 +383,9 @@ async function loadSeasons() {
 
 async function loadGames() {
   let games = lsGet(seasonCacheKey(), null);
+  // A pre-fix cache could hold thousands of schedule games (OSSAA import) and
+  // freeze the list on render — drop an oversize cache and refetch the bounded set.
+  if (games && games.length > 400) { games = null; try { localStorage.removeItem(seasonCacheKey()); } catch (e) {} }
   if (games) { allGames = games; applyGameFilter(); }
   try {
     const url = currentSeason === 'Current'
@@ -347,6 +399,12 @@ async function loadGames() {
       allGames = games;
       applyGameFilter();
       $('setup-status').textContent = '';
+    } else if (res.status === 401) {
+      // No / wrong token (iOS keeps the installed app's storage separate from
+      // Safari, and can evict it after ~7 idle days). Open the box and say so
+      // plainly instead of a scary "server error".
+      const tb = $('token-box'); if (tb) tb.open = true;
+      $('setup-status').textContent = 'Enter your tracker token above to load games.';
     } else {
       $('setup-status').textContent = games ? 'Server error — showing cached games' : 'Server error loading games';
     }
@@ -358,8 +416,18 @@ async function loadGames() {
 function renderGames(games) {
   const ul = $('game-list');
   ul.innerHTML = '';
-  if (!games.length) { ul.innerHTML = '<li class="empty">No games found</li>'; return; }
-  games.forEach(function (g) {
+  if (!games.length) {
+    var raw = (($('game-search') || {}).value || '').trim();
+    ul.innerHTML = '<li class="empty">' + (raw
+      ? 'No games match “' + raw + '”'
+      : 'No tracked games yet — search a team above to find a game to track.') + '</li>';
+    return;
+  }
+  // Hard cap the DOM so a large list (or a poisoned cache) can never freeze the
+  // phone — the search box narrows it down past the cap.
+  var CAP = 250;
+  var shown = games.length > CAP ? games.slice(0, CAP) : games;
+  shown.forEach(function (g) {
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.className = 'game-item';
@@ -372,6 +440,11 @@ function renderGames(games) {
     li.appendChild(btn);
     ul.appendChild(li);
   });
+  if (games.length > CAP) {
+    var more = document.createElement('li'); more.className = 'empty';
+    more.textContent = 'Showing ' + CAP + ' of ' + games.length + ' — type to search.';
+    ul.appendChild(more);
+  }
 }
 
 async function selectGame(gid) {
@@ -395,6 +468,9 @@ async function selectGame(gid) {
   // Sticky D: keep this game's saved scheme if it has one; a fresh game defaults
   // to the most-recently-used scheme (carried across games via LS.lastDefense).
   S.defense = ('defense' in prefs) ? prefs.defense : lsGet(LS.lastDefense, null);
+  // Sticky set call survives a mid-game reload but never carries between games
+  // (set calls change possession to possession, unlike a defense).
+  S.playType = ('playType' in prefs) ? prefs.playType : null;
   S.lastLive = lsGet(LS.live(gid), Object.assign({}, EMPTY_LIVE));
   try { S.queue = await qLoad(gid); } catch (e) { S.queue = []; }
   resetFlow('shot');
@@ -443,7 +519,7 @@ function toggleNewGame() {
 }
 
 async function loadTeams() {
-  if (!navigator.onLine) { NG.loaded = false; NG.status = 'Needs connection'; renderNewGame(); return; }
+  if (!isOnline()) { NG.loaded = false; NG.status = 'Needs connection'; renderNewGame(); return; }
   try {
     const res = await api('/api/teams');
     if (res.ok) {
@@ -503,6 +579,7 @@ function teamPicker(side) {
   const search = document.createElement('input');
   search.type = 'search';
   search.placeholder = 'Search teams';
+  search.autocomplete = 'off';          // no saved-names autofill bar over the chips
   search.value = NG.search[side];
   search.addEventListener('input', function () {
     NG.search[side] = search.value;
@@ -522,7 +599,10 @@ function teamPicker(side) {
 function fillTeamChips(side, box) {
   box.innerHTML = '';
   const q = NG.search[side].trim().toLowerCase();
-  NG.teams.filter(function (t) { return !q || t.name.toLowerCase().indexOf(q) >= 0; })
+  const gf = genderFilter();
+  NG.teams.filter(function (t) {
+    return (!gf || t.gender === gf) && (!q || t.name.toLowerCase().indexOf(q) >= 0);
+  })
     .forEach(function (t) {
       box.appendChild(flowBtn(t.name, 'chip' + (NG.sel[side] === t.id ? ' sel' : ''), function () {
         NG.sel[side] = NG.sel[side] === t.id ? null : t.id;
@@ -541,7 +621,10 @@ function newTeamForm(side) {
   const name = document.createElement('input');
   name.type = 'text';
   name.placeholder = 'Team name';
+  name.autocomplete = 'off';            // no autofill bar over the inline form
+  name.autocapitalize = 'words';
   const cls = document.createElement('select');
+  cls.setAttribute('aria-label', 'Class');
   TEAM_CLASSES.forEach(function (c) {
     const o = document.createElement('option');
     o.value = c; o.textContent = c;
@@ -549,9 +632,11 @@ function newTeamForm(side) {
     cls.appendChild(o);
   });
   const gen = document.createElement('select');
-  ['M', 'F'].forEach(function (g) {
+  gen.setAttribute('aria-label', 'Gender');
+  // value stays 'M'/'F' for the API; label reads Boys/Girls (app convention).
+  [['M', 'Boys'], ['F', 'Girls']].forEach(function (g) {
     const o = document.createElement('option');
-    o.value = g; o.textContent = g;
+    o.value = g[0]; o.textContent = g[1];
     gen.appendChild(o);
   });
   const stat = document.createElement('p');
@@ -559,7 +644,7 @@ function newTeamForm(side) {
   const btn = flowBtn('Create team', 'btn primary', async function () {
     const nm = name.value.trim();
     if (!nm) { stat.textContent = 'Name required'; return; }
-    if (!navigator.onLine) { stat.textContent = 'Needs connection'; return; }
+    if (!isOnline()) { stat.textContent = 'Needs connection'; return; }
     try {
       const res = await api('/api/teams', {
         method: 'POST',
@@ -591,7 +676,7 @@ async function createGame() {
   if (NG.sel.home == null || NG.sel.away == null) { st.textContent = 'Pick both teams'; return; }
   if (NG.sel.home === NG.sel.away) { st.textContent = 'Home and away must differ'; return; }
   if (!NG.date) { st.textContent = 'Pick a date'; return; }
-  if (!navigator.onLine) { st.textContent = 'Needs connection'; return; }
+  if (!isOnline()) { st.textContent = 'Needs connection'; return; }
   try {
     // browsing a past season → stamp the new game there; else let the server
     // infer from the date (Oct 1 cutoff).
@@ -620,7 +705,7 @@ function savePrefs() {
   if (!S.gameId) return;
   lsSet(LS.game(S.gameId), {
     lineup: S.lineup, quarter: S.quarter, clockMin: S.clockMin, clockSec: S.clockSec,
-    defense: S.defense
+    defense: S.defense, playType: S.playType
   });
 }
 
@@ -658,7 +743,6 @@ function renderLineup() {
         box.appendChild(lineupChip('#' + p.number + ' ' + p.name,
           S.lineup[side].indexOf(p.id) >= 0,
           function () { toggleSel(S.lineup[side], p.id, 5, 'players'); }));
-        box.appendChild(handToggle(p));
       });
   });
 
@@ -671,33 +755,65 @@ function renderLineup() {
         S.lineup.officials.indexOf(o.id) >= 0,
         function () { toggleSel(S.lineup.officials, o.id, 3, 'officials'); }));
     });
+
+  renderHands('home');
+  renderHands('away');
 }
 
-/* ----- per-player shooting-hand toggle (lineup roster) ----- */
+/* ----- per-team shooting-hand editor (revealed table; keeps the roster
+   chips clean — each player is one row name + an R/L segmented toggle) ----- */
 
-function handToggle(p) {
-  const hand = (p.handedness === 'left') ? 'left' : 'right';
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'chip hand-toggle';
-  b.textContent = hand === 'left' ? '✋L' : '✋R';
-  b.title = 'Shooting hand: ' + hand + ' — tap to flip';
-  b.addEventListener('click', function () { flipHandedness(p); });
-  return b;
+function renderHands(side) {
+  const box = $('hands-' + side);
+  if (!box || !S.game) return;
+  box.innerHTML = '';
+  const teamId = S.game[side].id;
+  const players = (S.game.players || [])
+    .filter(function (p) { return p.team_id === teamId && !p.archived; });
+  if (!players.length) {
+    const e = document.createElement('p');
+    e.className = 'status';
+    e.textContent = 'No players yet.';
+    box.appendChild(e);
+    return;
+  }
+  players.forEach(function (p) { box.appendChild(handRow(p, side)); });
 }
 
-async function flipHandedness(p) {
-  if (!navigator.onLine) { toast('Needs connection to change hand'); return; }
-  const next = (p.handedness === 'left') ? 'right' : 'left';
+function handRow(p, side) {
+  const row = document.createElement('div');
+  row.className = 'hand-row';
+  const nm = document.createElement('span');
+  nm.className = 'hand-row-name';
+  nm.textContent = '#' + p.number + ' ' + p.name;
+  row.appendChild(nm);
+  const cur = (p.handedness === 'left') ? 'left' : 'right';
+  const seg = document.createElement('div');
+  seg.className = 'hand-seg';
+  [['right', 'R'], ['left', 'L']].forEach(function (opt) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip hand-opt' + (cur === opt[0] ? ' sel' : '');
+    b.textContent = opt[1];
+    b.addEventListener('click', function () { setHandedness(p, opt[0], side); });
+    seg.appendChild(b);
+  });
+  row.appendChild(seg);
+  return row;
+}
+
+async function setHandedness(p, value, side) {
+  if (((p.handedness === 'left') ? 'left' : 'right') === value) return;  // no-op
+  if (!isOnline()) { toast('Needs connection to change hand'); return; }
   try {
     const res = await api('/api/games/' + S.gameId + '/players/' + p.id + '/handedness', {
-      method: 'POST', body: JSON.stringify({ handedness: next })
+      method: 'POST', body: JSON.stringify({ handedness: value })
     });
     if (!res.ok) { toast('Failed to update hand'); return; }
-    p.handedness = next;
+    p.handedness = value;
     lsSet(LS.roster(S.gameId), S.game);
-    toast('#' + p.number + ' ' + p.name + ' is now ' + next + '-handed');
-    renderLineup();
+    toast('#' + p.number + ' ' + p.name + ' → ' + value + '-handed');
+    renderHands(side);
   } catch (e) { toast('Needs connection'); }
 }
 
@@ -714,7 +830,7 @@ async function quickAddPlayer(side) {
   const handIn = $('add-' + side + '-hand');
   const hand = (handIn && handIn.value === 'left') ? 'left' : 'right';
   if (!name) { st.textContent = 'Name required'; return; }
-  if (!navigator.onLine) { st.textContent = 'Needs connection'; return; }
+  if (!isOnline()) { st.textContent = 'Needs connection'; return; }
   try {
     const res = await api('/api/games/' + S.gameId + '/players', {
       method: 'POST',
@@ -749,7 +865,7 @@ async function quickAddOfficial() {
   const oid = parseInt(idIn.value, 10);
   if (!name) { st.textContent = 'Name required'; return; }
   if (isNaN(oid)) { st.textContent = 'Official ID required'; return; }
-  if (!navigator.onLine) { st.textContent = 'Needs connection'; return; }
+  if (!isOnline()) { st.textContent = 'Needs connection'; return; }
   try {
     const res = await api('/api/officials', {
       method: 'POST',
@@ -810,13 +926,16 @@ function syncHeaderInputs() {
   }
 }
 
-// +/- clock nudge (operates on total seconds so it wraps minutes naturally).
-function nudgeClock(deltaSec) {
-  let total = S.clockMin * 60 + S.clockSec + deltaSec;
-  total = Math.max(0, Math.min(99 * 60 + 59, total));
-  S.clockMin = Math.floor(total / 60);
-  S.clockSec = total % 60;
+// +/- steppers adjust minute and second INDEPENDENTLY (no borrow) — the point is
+// to drop just the minute between possessions without retyping. Each field clamps
+// to its own range (minutes ≤20 = HS ceiling, seconds ≤59).
+function nudgeMin(delta) {
+  S.clockMin = Math.max(0, Math.min(20, S.clockMin + delta));
   $('clock-min').value = S.clockMin;
+  savePrefs();
+}
+function nudgeSec(delta) {
+  S.clockSec = Math.max(0, Math.min(59, S.clockSec + delta));
   $('clock-sec').value = S.clockSec;
   savePrefs();
 }
@@ -824,8 +943,9 @@ function nudgeClock(deltaSec) {
 /* ----- running game clock -----
    A real start/stop clock so MIN, +/-, and the live win-prob the second screen
    draws aren't built on a clock the coach hand-winds. Every event stamps
-   time = clockStr(), so a running clock keeps that accurate automatically. The
-   clock is NEVER persisted as running — a reload restores it stopped. */
+   time = clockStr(), so a running clock keeps that accurate automatically. The +/-
+   steppers + manual entry stay; this just adds an optional auto-tick. The clock is
+   NEVER persisted as running — a reload restores it stopped. */
 function setClockBtn() {
   const b = $('clk-toggle');
   if (!b) return;
@@ -881,7 +1001,7 @@ function updateSyncUI() {
 }
 
 function updateNetUI() {
-  const cls = 'dot ' + (navigator.onLine ? 'on' : 'off');
+  const cls = 'dot ' + (isOnline() ? 'on' : 'off');
   ['net-dot', 'net-dot2'].forEach(function (id) { const d = $(id); if (d) d.className = cls; });
 }
 
@@ -896,7 +1016,7 @@ function resetFlow(mode) {
     shooter: null,
     details: { pass_from_id: null, shot_created_by_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
     fouled: null, fouler: null, official: null,
-    player: null, stolen: null
+    player: null, stolen: null, tovKind: null
   };
   if (window.Court) Court.clearMarker();
   const cap = $('shot-caption');
@@ -914,12 +1034,16 @@ function setMode(m) {
 function onCourtTap(x, y) {
   if (S.flow.mode !== 'shot') setMode('shot'); // a court tap always means a shot
   S.flow.noLoc = false; // a tap always reverts to tap-derived value/zone
-  S.flow.x = x;
+  // The court is drawn from the coach's half-court->rim angle (left/right symmetric),
+  // so flip x for the STORED coordinate + zone only: tap left -> LW/LC, tap right ->
+  // RW/RC. The marker keeps the raw tapped x so it lands exactly where you touched.
+  const sx = -x;
+  S.flow.x = sx;
   S.flow.y = y;
   Court.setMarker(x, y);
-  const v = Court.shotValue(x, y);
-  const z = Court.zoneFromXY(x, y);
-  const d = Math.round(Court.shotDistance(x, y));
+  const v = Court.shotValue(sx, y);
+  const z = Court.zoneFromXY(sx, y);
+  const d = Math.round(Court.shotDistance(sx, y));
   $('shot-caption').textContent = (v === 3 ? '3PT' : '2PT') + ' · ' + z + ' · ' + d + ' ft';
   renderFlow();
 }
@@ -1000,6 +1124,14 @@ const PLAY_TYPE_KEYS = PLAY_TYPES.map(function (p) { return p[0]; });
 const PLAY_TYPE_LABEL = PLAY_TYPES.reduce(function (m, p) { m[p[0]] = p[1]; return m; }, {});
 function ptLabel(k) { return PLAY_TYPE_LABEL[k] || k; }
 
+// Turnover KIND (optional; detailed mode + editor only — hidden in quick mode).
+// Keep in lockstep with helpers/turnovers.TURNOVER_TYPES (server folds unknown
+// -> 'other'). Orthogonal to play_type — the set call stays the extra layer.
+const TOV_TYPES = [
+  ['travel', 'Violation'], ['drive', 'Drive'], ['pass', 'Pass'],
+  ['shot_clock', 'Shot clock'], ['held', 'Held ball']
+];
+
 // Sticky "current defense" the opponent is in. Unlike play_type (per-shot), a
 // defense holds for stretches, so this is set ONCE on the always-visible bar and
 // every event logged inherits S.defense until it's changed. Keep this list in
@@ -1045,11 +1177,41 @@ function renderDefenseBar() {
   bar.appendChild(box);
 }
 
+// Sticky "current set call" — the play_type twin of the defense bar, in the
+// same always-visible area so it works in quick AND detailed mode. Tapping sets
+// S.playType for every subsequent event (shots, TURNOVERS and FOULS inherit it
+// via baseEvent); the detailed shot flow's own Play-type chips override it for
+// that one shot. Re-tapping the selected call clears it.
+function renderPlayTypeBar() {
+  const bar = $('playtype-bar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  if (!S.game) return;
+  const lab = document.createElement('span');
+  lab.className = 'chip-label';
+  lab.textContent = 'Set call';
+  bar.appendChild(lab);
+  const box = document.createElement('div');
+  box.className = 'chips scroll';
+  function pickPlayType(k) {
+    S.playType = k;
+    savePrefs();
+    renderPlayTypeBar();
+    renderFlow();               // shot-flow chips preview the sticky pick
+  }
+  box.appendChild(flowBtn('—', 'chip' + (S.playType == null ? ' sel' : ''),
+    function () { pickPlayType(null); }));
+  PLAY_TYPE_KEYS.forEach(function (k) {
+    box.appendChild(flowBtn(ptLabel(k), 'chip' + (S.playType === k ? ' sel' : ''),
+      function () { pickPlayType(S.playType === k ? null : k); }));
+  });
+  bar.appendChild(box);
+}
+
 /* ----- in-place subs (tracker screen) -----
-   Swap the on-court five without leaving the tracker. Minutes and +/- key off
-   the lineup snapshot stamped on every event (baseEvent.on_court), so keeping
-   subs here — instead of bouncing to the lineup screen mid-run — is what keeps
-   those two numbers honest. */
+   Swap the on-court five without leaving the tracker. Minutes and +/- key off the
+   lineup snapshot stamped on every event (baseEvent.on_court), so keeping subs here
+   — instead of bouncing to the lineup screen mid-run — is what keeps those honest. */
 function toggleOnCourt(side, id) {
   const arr = S.lineup[side];
   const i = arr.indexOf(id);
@@ -1077,8 +1239,8 @@ function renderSubsPanel() {
     const teamId = S.game[side].id;
     (S.game.players || []).filter(function (p) { return p.team_id === teamId && !p.archived; })
       .forEach(function (p) {
-        box.appendChild(lineupChip('#' + p.number + ' ' + p.name,
-          S.lineup[side].indexOf(p.id) >= 0,
+        const sel = S.lineup[side].indexOf(p.id) >= 0;
+        box.appendChild(flowBtn('#' + p.number + ' ' + p.name, 'chip' + (sel ? ' sel' : ''),
           function () { toggleOnCourt(side, p.id); }));
       });
     grp.appendChild(box);
@@ -1119,6 +1281,7 @@ function renderFlow() {
   const wrap = $('flow');
   if (!wrap) return;
   renderDefenseBar();          // sticky D bar lives outside #flow — refresh every pass
+  renderPlayTypeBar();         // sticky set-call bar, same area (quick + detailed)
   wrap.innerHTML = '';
   if (!S.game || !S.flow) return;
   const f = S.flow;
@@ -1149,9 +1312,10 @@ function renderFlow() {
           wrap.appendChild(chipRow(d[1], players, f.details[d[0]],
             function (id) { f.details[d[0]] = id; renderFlow(); }, { allowNone: true, scroll: true }));
         });
-        wrap.appendChild(chipRow('Play type', PLAY_TYPE_KEYS, f.details.play_type,
-          function (k) { f.details.play_type = k; renderFlow(); },
-          { allowNone: true, scroll: true, labelFn: ptLabel }));
+        // Set call comes from the always-visible sticky bar (renderPlayTypeBar)
+        // above the flow — no per-shot Play type row here (it duplicated the bar).
+        // baseEvent already stamps S.playType onto the shot; f.details.play_type
+        // stays null so the logShot fallback keeps the bar's pick.
       } else {
         wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
           function () { f.expand = true; renderFlow(); }));
@@ -1190,9 +1354,21 @@ function renderFlow() {
   } else if (f.mode === 'tov') {
     wrap.appendChild(chipRow('Player', players, f.player, function (id) { f.player = id; renderFlow(); }));
     if (f.player != null) {
-      wrap.appendChild(chipRow('Stolen by',
-        players.filter(function (id) { return id !== f.player; }),
-        f.stolen, function (id) { f.stolen = id; renderFlow(); }, { allowNone: true }));
+      if (!quickModeOn() || f.expand) {
+        wrap.appendChild(chipRow('Stolen by',
+          players.filter(function (id) { return id !== f.player; }),
+          f.stolen, function (id) { f.stolen = id; renderFlow(); }, { allowNone: true }));
+        wrap.appendChild(optRow('TO kind',
+          TOV_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
+          f.tovKind, function (v) { f.tovKind = v; renderFlow(); }));
+      } else {
+        // quick mode: steal chips stay one tap away, TO kind hides behind it too
+        wrap.appendChild(chipRow('Stolen by',
+          players.filter(function (id) { return id !== f.player; }),
+          f.stolen, function (id) { f.stolen = id; renderFlow(); }, { allowNone: true }));
+        wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
+          function () { f.expand = true; renderFlow(); }));
+      }
       wrap.appendChild(flowBtn('LOG TURNOVER', 'btn primary big', logTov));
     }
   }
@@ -1210,7 +1386,8 @@ function baseEvent(type) {
     shot_result: null,
     shot_x: null, shot_y: null, shot_type: null, zone: null,
     pass_from_id: null, shot_created_by_id: null, rebound_by_id: null,
-    blocked_by_id: null, guarded_by_id: null, play_type: null,
+    blocked_by_id: null, guarded_by_id: null,
+    play_type: S.playType,                       // sticky current set call (see PLAY_TYPES)
     secondary_player_id: null, official_id: null, stolen_by_id: null,
     defense: S.defense,                          // sticky current defense (see DEFENSES)
     on_court: onCourtIds(),
@@ -1246,6 +1423,9 @@ async function logShot(result) {
     ev.zone = f.manualZone;
   }
   Object.assign(ev, f.details);
+  // the per-shot chip overrides the sticky set call; untouched (null) falls
+  // back to the bar's current pick
+  if (ev.play_type == null) ev.play_type = S.playType;
   await queueEvent(ev);
   toast((ev.shot_type === 3 ? '3PT ' : '2PT ') + result + ' — ' + pLabel(ev.primary_player_id));
   resetFlow('shot');
@@ -1258,9 +1438,9 @@ async function logFT(result) {
   ev.primary_player_id = f.shooter;
   ev.shot_result = result;
   ev.rebound_by_id = f.details.rebound_by_id;
-  // An FT is a dead-ball possession — never a set call or defensive scheme.
-  // Drop the sticky defense baseEvent copied in (play_type is already null);
-  // the server gates this too, but keep the queued/offline payload clean.
+  // FTs never carry the set call or defense — the server's free_throw INSERT
+  // drops both columns, so clear them here too and keep the payload honest even
+  // when the sticky Set call / Defense bars are set.
   ev.play_type = null;
   ev.defense = null;
   await queueEvent(ev);
@@ -1291,6 +1471,7 @@ async function logTov() {
   const ev = baseEvent('turnover');
   ev.primary_player_id = f.player;
   ev.stolen_by_id = f.stolen;
+  ev.turnover_type = f.tovKind;
   await queueEvent(ev);
   toast('Turnover — ' + pLabel(f.player));
   resetFlow('tov');
@@ -1475,7 +1656,8 @@ function formFromEvent(ev) {
     official_id: ev.official_id != null ? ev.official_id : null,
     stolen_by_id: ev.stolen_by_id != null ? ev.stolen_by_id : null,
     play_type: ev.play_type || null,
-    defense: ev.defense || null
+    defense: ev.defense || null,
+    turnover_type: ev.turnover_type || null
   };
 }
 
@@ -1610,11 +1792,17 @@ function buildEditForm(ev) {
     box.appendChild(pickRow('Fouler', 'secondary_player_id', roster));
     const offIds = ((S.game && S.game.officials) || []).map(function (o) { return o.id; });
     box.appendChild(pickRow('Official', 'official_id', offIds, { labelFn: oLabel }));
+    box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
+      f.play_type, function (v) { f.play_type = v; rerender(); }));
     box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
       f.defense, function (v) { f.defense = v; rerender(); }));
   } else if (f.event_type === 'turnover') {
     box.appendChild(pickRow('Player', 'primary_player_id', roster));
     box.appendChild(pickRow('Stolen by', 'stolen_by_id', roster));
+    box.appendChild(optRow('TO kind', TOV_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
+      f.turnover_type, function (v) { f.turnover_type = v; rerender(); }));
+    box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
+      f.play_type, function (v) { f.play_type = v; rerender(); }));
     box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
       f.defense, function (v) { f.defense = v; rerender(); }));
   }
@@ -1641,7 +1829,7 @@ function setDrift(on) {
 // explicit re-freeze of the stored score from the event log (online-only)
 async function rescoreGame() {
   if (!S.gameId) return;
-  if (!navigator.onLine) { toast('Needs connection'); return; }
+  if (!isOnline()) { toast('Needs connection'); return; }
   try {
     const res = await api('/api/games/' + S.gameId + '/rescore', { method: 'POST' });
     if (!res.ok) { toast('Recompute failed (HTTP ' + res.status + ')'); return; }
@@ -1674,7 +1862,8 @@ async function saveEdit(eid) {
     official_id: f.official_id,
     stolen_by_id: f.stolen_by_id,
     play_type: f.play_type,
-    defense: f.defense
+    defense: f.defense,
+    turnover_type: f.turnover_type
   };
   try {
     const res = await api('/api/games/' + S.gameId + '/events/' + eid, {
@@ -1756,6 +1945,7 @@ function bindUI() {
     currentSeason = this.value || 'Current';
     loadGames();
   });
+  renderGenderFilter();
 
   // lineup
   $('btn-lineup-back').addEventListener('click', function () { showScreen('setup'); loadGames(); });
@@ -1767,6 +1957,11 @@ function bindUI() {
       f.hidden = !f.hidden;
     });
     $('add-' + side + '-save').addEventListener('click', function () { quickAddPlayer(side); });
+    $('btn-hands-' + side).addEventListener('click', function () {
+      const t = $('hands-' + side);
+      t.hidden = !t.hidden;
+      if (!t.hidden) renderHands(side);
+    });
   });
   $('btn-add-official').addEventListener('click', function () {
     const f = $('add-official-form');
@@ -1782,13 +1977,16 @@ function bindUI() {
 
   // tracker header
   $('btn-subs').addEventListener('click', function () { toggleSubsPanel(); });
+  // courtside whiteboard overlay (wb.js) — same tap-in/tap-out feel as Subs
+  $('btn-board').addEventListener('click', function () {
+    if (window.WB) window.WB.toggle();
+  });
   $('quick-toggle').addEventListener('click', function () {
     setQuickMode(!quickModeOn());
     setQuickBtn();
     if (S.flow) S.flow.expand = false;
     renderFlow();
   });
-  $('clk-toggle').addEventListener('click', toggleClock);
   $('q-minus').addEventListener('click', function () {
     S.quarter = Math.max(1, S.quarter - 1);
     $('q-label').textContent = qlabel(S.quarter);
@@ -1799,13 +1997,13 @@ function bindUI() {
     $('q-label').textContent = qlabel(S.quarter);
     savePrefs();
   });
-  // Manual clock entry stays available as a backup. Focusing a field while the
-  // clock is running pauses it first, so the tick can't overwrite what you type.
+  // Focusing a clock field while the clock is running pauses it first, so the tick
+  // can't overwrite what you type. Manual entry + steppers stay fully available.
   ['clock-min', 'clock-sec'].forEach(function (id) {
     $(id).addEventListener('focus', function () { if (S.clockRunning) stopClock(); });
   });
   $('clock-min').addEventListener('change', function () {
-    S.clockMin = Math.max(0, Math.min(99, parseInt(this.value, 10) || 0));
+    S.clockMin = Math.max(0, Math.min(20, parseInt(this.value, 10) || 0));
     this.value = S.clockMin;
     savePrefs();
   });
@@ -1814,8 +2012,11 @@ function bindUI() {
     this.value = S.clockSec;
     savePrefs();
   });
-  $('clk-minus').addEventListener('click', function () { nudgeClock(-1); });
-  $('clk-plus').addEventListener('click', function () { nudgeClock(1); });
+  $('clk-toggle').addEventListener('click', toggleClock);
+  $('clk-min-minus').addEventListener('click', function () { nudgeMin(-1); });
+  $('clk-min-plus').addEventListener('click', function () { nudgeMin(1); });
+  $('clk-sec-minus').addEventListener('click', function () { nudgeSec(-1); });
+  $('clk-sec-plus').addEventListener('click', function () { nudgeSec(1); });
 
   // modes / actions
   document.querySelectorAll('#mode-row .mode').forEach(function (b) {
@@ -1852,7 +2053,8 @@ function bindUI() {
 
 // Controls whose endpoints a guest "assistant scorer" link can't call.
 const GUEST_HIDE_IDS = ['btn-new-game', 'btn-add-home', 'btn-add-away',
-  'btn-add-official', 'btn-finish', 'btn-edit-log', 'btn-lineup-edit-log'];
+  'btn-add-official', 'btn-finish', 'btn-edit-log', 'btn-lineup-edit-log',
+  'btn-hands-home', 'btn-hands-away'];
 
 async function applyGuestMode() {
   // A guest link is log-only — hide create/finish/edit/add controls so the

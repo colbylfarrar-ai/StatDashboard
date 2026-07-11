@@ -10,6 +10,16 @@
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <link rel="stylesheet" href="/static/style.css">
 <title>HoopTracks</title>
+<script>
+/* Self-heal: an earlier build cached the entire schedule (13k+ games) in
+   localStorage, which froze the game picker on render. Clear an oversize cache
+   here — BEFORE app.js runs — so even a stale installed app recovers without a
+   reinstall. A normal cache (a handful of games) is a few KB, far under this. */
+try {
+  var _g = localStorage.getItem('tracker_games');
+  if (_g && _g.length > 200000) localStorage.removeItem('tracker_games');
+} catch (e) {}
+</script>
 </head>
 <body>
 
@@ -25,9 +35,9 @@
     <span id="net-dot" class="dot"></span>
   </header>
   <details id="token-box">
-    <summary>Server token</summary>
+    <summary>Tracker token</summary>
     <div class="token-row">
-      <input id="token-input" type="password" placeholder="Access code (optional)" autocomplete="off">
+      <input id="token-input" type="text" inputmode="text" placeholder="Paste your tracker token" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Tracker token">
       <button id="token-save" class="btn">Save</button>
     </div>
   </details>
@@ -35,7 +45,8 @@
   <button id="btn-new-game" class="btn ghost" type="button">+ New game</button>
   <div id="new-game-form" hidden></div>
   <select id="season-select" class="game-search" title="Season" hidden></select>
-  <input id="game-search" class="game-search" type="search" placeholder="Search team or date…" autocomplete="off">
+  <div id="gender-filter" class="chips gender-filter" role="group" aria-label="Filter by gender"></div>
+  <input id="game-search" class="game-search" type="search" placeholder="Search a team to find any game…" autocomplete="off">
   <ul id="game-list" class="game-list"></ul>
 </section>
 
@@ -48,7 +59,10 @@
   <div class="lineup-group">
     <h3 id="lineup-home-name"></h3>
     <div id="chips-home" class="chips"></div>
-    <button id="btn-add-home" class="btn ghost small add-btn" type="button">+ Add player</button>
+    <div class="lineup-actions">
+      <button id="btn-add-home" class="btn ghost small add-btn" type="button">+ Add player</button>
+      <button id="btn-hands-home" class="btn ghost small" type="button">✋ Hands</button>
+    </div>
     <div id="add-home-form" class="inline-form" hidden>
       <input id="add-home-name" type="text" placeholder="Name" autocomplete="off">
       <input id="add-home-number" type="number" placeholder="##" inputmode="numeric" min="0" max="999">
@@ -59,11 +73,15 @@
       <button id="add-home-save" class="btn primary" type="button">Add</button>
       <p id="add-home-status" class="status"></p>
     </div>
+    <div id="hands-home" class="hands-table" hidden></div>
   </div>
   <div class="lineup-group">
     <h3 id="lineup-away-name"></h3>
     <div id="chips-away" class="chips"></div>
-    <button id="btn-add-away" class="btn ghost small add-btn" type="button">+ Add player</button>
+    <div class="lineup-actions">
+      <button id="btn-add-away" class="btn ghost small add-btn" type="button">+ Add player</button>
+      <button id="btn-hands-away" class="btn ghost small" type="button">✋ Hands</button>
+    </div>
     <div id="add-away-form" class="inline-form" hidden>
       <input id="add-away-name" type="text" placeholder="Name" autocomplete="off">
       <input id="add-away-number" type="number" placeholder="##" inputmode="numeric" min="0" max="999">
@@ -74,6 +92,7 @@
       <button id="add-away-save" class="btn primary" type="button">Add</button>
       <p id="add-away-status" class="status"></p>
     </div>
+    <div id="hands-away" class="hands-table" hidden></div>
   </div>
   <div class="lineup-group">
     <h3 id="lineup-officials-name">Officials</h3>
@@ -106,22 +125,15 @@
         <span id="q-label">Q1</span>
         <button id="q-plus" class="btn sq" aria-label="Next period">+</button>
       </div>
-      <div class="clock">
-        <button id="clk-toggle" class="btn sq clk-go" type="button" aria-label="Start clock">&#9654;</button>
-        <button id="clk-minus" class="btn sq" type="button" aria-label="Clock down one second">&minus;</button>
-        <input id="clock-min" type="number" min="0" max="99" value="8" inputmode="numeric" aria-label="Minutes">
-        <span>:</span>
-        <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
-        <button id="clk-plus" class="btn sq" type="button" aria-label="Clock up one second">+</button>
-      </div>
       <span id="sync-badge" class="badge ok" title="Queued events">0</span>
       <span id="net-dot2" class="dot"></span>
       <button id="btn-subs" class="btn ghost">Subs</button>
+      <button id="btn-board" class="btn ghost">Board</button>
     </div>
   </header>
 
-  <!-- In-place subs: swap the on-court five without leaving the tracker, so
-       minutes and +/- (which key off the lineup snapshot) stay correct. -->
+  <!-- In-place subs: swap the on-court five without leaving the tracker, so minutes
+       and +/- (which key off the lineup snapshot) stay correct. -->
   <div id="subs-panel" hidden></div>
 
   <div id="court-wrap"></div>
@@ -138,8 +150,14 @@
        logged inherits it until you change it (a team stays in a D for stretches). -->
   <div id="defense-bar"></div>
 
-  <!-- Quick vs full-detail shot entry. Quick (default) = tap shooter + make/miss
-       only; full adds assist / rebound / play-type rows on every shot. -->
+  <!-- Sticky "current set call" (play type) — the offense twin of the defense
+       bar: set it once and every shot, TURNOVER and FOUL logged inherits it.
+       Works in quick and detailed mode; the detailed shot flow's Play-type
+       chips override it per shot. -->
+  <div id="playtype-bar"></div>
+
+  <!-- Quick vs full-detail shot entry. Quick (default) = tap shooter + make/miss;
+       full adds assist / rebound / play-type rows on every shot. -->
   <div id="flow-opts">
     <button id="quick-toggle" class="btn ghost small" type="button"></button>
   </div>
@@ -154,6 +172,20 @@
   </div>
 
   <p id="sync-status" class="status"></p>
+
+  <!-- Clock lives down here (not the header): it's the LAST thing updated after
+       logging an event, so it sits between the action row and the play-by-play. -->
+  <div class="clock" aria-label="Game clock">
+    <button id="clk-toggle" class="btn sq clk-go" type="button" aria-label="Start clock">&#9654;</button>
+    <button id="clk-min-minus" class="btn sq" type="button" aria-label="Minute down">&minus;</button>
+    <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
+    <button id="clk-min-plus" class="btn sq" type="button" aria-label="Minute up">+</button>
+    <span class="clock-colon">:</span>
+    <button id="clk-sec-minus" class="btn sq" type="button" aria-label="Second down">&minus;</button>
+    <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
+    <button id="clk-sec-plus" class="btn sq" type="button" aria-label="Second up">+</button>
+  </div>
+
   <h3 class="pbp-h">Play-by-play</h3>
   <ul id="pbp" class="pbp"></ul>
 </section>
@@ -192,11 +224,45 @@
     }
   } catch (e) { /* ignore */ }
   if ('serviceWorker' in navigator) {
+    // Auto-update: the SW activates immediately (skipWaiting in sw.js). When a NEW
+    // worker takes over an already-controlled page, reload once so a reopen lands
+    // on the latest version. `hadController` skips the reload on the first install.
+    var hadController = !!navigator.serviceWorker.controller;
+    var refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (refreshing || !hadController) return;
+      refreshing = true;
+      window.location.reload();
+    });
     navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
   }
 })();
 </script>
+<!-- Courtside whiteboard overlay — tap Board to open, Close to get back to the
+     tracker (mirrors the Subs panel). Draw / draggable X-O pieces / ball / erase,
+     half or full court. Nothing is saved, ever. -->
+<div id="wb-overlay" hidden>
+  <div id="wb-bar">
+    <button id="wb-half" class="btn small">Half</button>
+    <button id="wb-full" class="btn small ghost">Full</button>
+    <span class="wb-sep"></span>
+    <button class="btn small wb-tool" data-t="pen">Draw</button>
+    <button class="btn small wb-tool ghost" data-t="O">O</button>
+    <button class="btn small wb-tool ghost" data-t="X">X</button>
+    <button class="btn small wb-tool ghost" data-t="ball">Ball</button>
+    <button class="btn small wb-tool ghost" data-t="erase">Erase</button>
+    <span class="wb-sep"></span>
+    <button id="wb-clear" class="btn small ghost">Clear</button>
+    <button id="wb-close" class="btn small">Close</button>
+  </div>
+  <div id="wb-stage"><div id="wb-frame">
+    <canvas id="wb-court"></canvas>
+    <canvas id="wb-draw"></canvas>
+  </div></div>
+</div>
+
 <script src="/static/court.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/wb.js"></script>
 </body>
 </html>
